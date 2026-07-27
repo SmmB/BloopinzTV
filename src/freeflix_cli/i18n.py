@@ -252,6 +252,25 @@ _FR = {
     "no": "non",
     "auto in": "auto dans",
     "Next episode": "Épisode suivant",
+    "No Android player found — install mpv-android (F-Droid).":
+        "Aucun lecteur Android trouvé — installe mpv-android (F-Droid).",
+    "Could not launch the Android player.": "Impossible de lancer le lecteur Android.",
+    "Playing in": "Lecture dans",
+    "Press Enter when the episode is finished": "Appuie sur Entrée quand l'épisode est terminé",
+    "source unreachable": "source injoignable",
+    "The site is down or your network/ISP is blocking it. Try again later, or another source.":
+        "Le site est hors ligne ou ton réseau/FAI le bloque. Réessaie plus tard, ou une autre source.",
+    "Tip: a VPN or the Cloudflare/FlareSolverr settings can help.":
+        "Astuce : un VPN ou les réglages Cloudflare/FlareSolverr peuvent aider.",
+    "Something went wrong with this source.": "Un problème est survenu avec cette source.",
+    "Install ffmpeg + aria2 + chafa (package manager)":
+        "Installer ffmpeg + aria2 + chafa (gestionnaire de paquets)",
+    "Guide you to install mpv-android for playback":
+        "Te guider pour installer mpv-android (lecture vidéo)",
+    "To play videos, install mpv-android (F-Droid):":
+        "Pour lire les vidéos, installe mpv-android (F-Droid) :",
+    "Then grant storage so downloads land in /sdcard/Download:":
+        "Puis autorise le stockage pour que les téléchargements aillent dans /sdcard/Download :",
     "Icon Style": "Style d'icônes",
     "Cloudflare token": "Token Cloudflare",
     "Data used": "Données consommées",

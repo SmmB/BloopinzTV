@@ -528,12 +528,30 @@ def format_quality_label(info: dict) -> str:
 PLAYERS: Dict[str, Dict[str, str]] = {
     "mpv": {"display": "mpv"},
     "vlc": {"display": "vlc"},
+    "android": {"display": "android (mpv-android / VLC)"},
     "browser": {"display": "browser"},
     "download": {"display": "download"},
     "manual": {"display": "manual"},
 }
 
-DOWNLOAD_DIR = os.path.expanduser("~/Downloads/FreeFlix")
+
+def _android_download_dir() -> str:
+    """On Android, prefer the shared /sdcard/Download (visible in the gallery /
+    file manager) when it's reachable, else the home Downloads folder."""
+    for cand in ("/sdcard/Download", os.path.expanduser("~/storage/downloads")):
+        parent = os.path.dirname(cand)
+        if os.path.isdir(cand) or os.path.isdir(parent):
+            return os.path.join(cand, "FreeFlix")
+    return os.path.expanduser("~/Downloads/FreeFlix")
+
+
+try:
+    from . import platform_android as _pa
+    _ON_ANDROID = _pa.is_android()
+except Exception:
+    _ON_ANDROID = False
+
+DOWNLOAD_DIR = _android_download_dir() if _ON_ANDROID else os.path.expanduser("~/Downloads/FreeFlix")
 TEMP_DIR = os.path.join(DOWNLOAD_DIR, ".temp")
 
 
@@ -1505,14 +1523,24 @@ def play_video(
             if force_manual_mode or not player_pref or player_pref == "manual":
                 # Separate display labels from the internal values so the
                 # "(recommended)" tag on mpv doesn't leak into player_name.
-                player_values = ["mpv", "vlc", "browser", "download"]
-                player_labels = [
-                    f"mpv ({t('recommended')})",
-                    "vlc",
-                    "browser",
-                    "download",
-                    t("← Back"),
-                ]
+                if _ON_ANDROID:
+                    # No subprocess mpv on Android — hand off to mpv-android.
+                    player_values = ["android", "browser", "download"]
+                    player_labels = [
+                        f"android ({t('recommended')})",
+                        "browser",
+                        "download",
+                        t("← Back"),
+                    ]
+                else:
+                    player_values = ["mpv", "vlc", "browser", "download"]
+                    player_labels = [
+                        f"mpv ({t('recommended')})",
+                        "vlc",
+                        "browser",
+                        "download",
+                        t("← Back"),
+                    ]
                 player_choice = select_from_list(
                     player_labels, t("🎮 Select video player:")
                 )
@@ -1525,6 +1553,10 @@ def play_video(
             else:
                 player_name = player_pref
                 player_executable = None
+                # A desktop player can't run headless on Android — hand off to
+                # the external Android player instead.
+                if _ON_ANDROID and player_name in ("mpv", "vlc"):
+                    player_name = "android"
 
         # --- 1. Preparation of Headers & Referer for both players ---
         # Calculate Referer
@@ -1547,7 +1579,7 @@ def play_video(
 
         user_agent = headers.get("User-Agent", DEFAULT_USER_AGENT)
 
-        if player_name in ("browser", "download"):
+        if player_name in ("android", "browser", "download"):
             pass  # No specific executable needed at this stage
         elif player_name == "vlc":
             # Resolve VLC, offering to install it if missing.
@@ -1605,6 +1637,61 @@ def play_video(
                 continue
             else:
                 return False
+
+        if player_name == "android":
+            # Android : no display for a subprocess player — hand the proxy
+            # stream URL to an external Android player (mpv-android / VLC) via
+            # an intent. The proxy still injects headers + rewrites the m3u8.
+            from . import platform_android
+
+            proxy_headers = headers.copy()
+            if referer:
+                proxy_headers["Referer"] = referer
+            if player_config.get("alt-used") is True:
+                proxy_headers["Alt-Used"] = domain
+            sec_headers = player_config.get("sec_headers")
+            if isinstance(sec_headers, str):
+                for part in sec_headers.split(";"):
+                    if ":" in part:
+                        k, v = part.split(":", 1)
+                        proxy_headers[k.strip()] = v.strip()
+
+            encoded_url = urllib.parse.quote(stream_url)
+            encoded_headers = urllib.parse.quote(json.dumps(proxy_headers))
+
+            proxy.ensure_started()
+            if not proxy.PROXY_URL:
+                print_error(t("Proxy server not initialized."))
+                return False
+
+            is_hls_stream = ".m3u8" in stream_url.lower() or ".txt" in stream_url.lower()
+            endpoint = "stream"
+            if not is_hls_stream and (
+                ("ext" in player_config and player_config["ext"] == "mp4") or is_mp4
+            ):
+                endpoint = "video"
+            local_stream_url = f"{proxy.PROXY_URL}/{endpoint}?url={encoded_url}&headers={encoded_headers}"
+
+            if not platform_android.available():
+                print_error(t("No Android player found — install mpv-android (F-Droid)."))
+                return False
+
+            ok, label = platform_android.launch_player(local_stream_url, title=title)
+            if not ok:
+                print_error(t("Could not launch the Android player."))
+                return False
+
+            print_success(f"{t('Playing in')} {label} …")
+            # We can't observe an external app's lifecycle, so wait for the user
+            # to come back and confirm the episode is done (drives auto-next).
+            try:
+                console.input(
+                    f"\n[dim]{t('Press Enter when the episode is finished')}[/dim]"
+                )
+            except (KeyboardInterrupt, EOFError):
+                pass
+            _LAST_PLAYBACK["finished"] = True  # assume watched → allow auto-next
+            return True
 
         if player_name == "browser":
             print_info(t("Launching [bold cyan]Browser[/bold cyan] Player..."))

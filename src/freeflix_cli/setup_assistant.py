@@ -45,6 +45,15 @@ def detect_os() -> str:
     return "unknown"
 
 
+def _is_android() -> bool:
+    """True on Android (Termux or a proot distro)."""
+    try:
+        from .platform_android import is_android
+        return is_android()
+    except Exception:
+        return False
+
+
 def detect_arch() -> str:
     """Return a normalised CPU arch : 'x86_64' or 'arm64' (else the raw name).
 
@@ -152,6 +161,10 @@ def get_local_bin_dir() -> Path:
 # ─── State checks ─────────────────────────────────────────────────────
 def is_setup_complete() -> bool:
     """True if mpv.conf + at least one Anime4K shader are installed."""
+    # Android delegates playback to mpv-android, so there's no mpv.conf / Anime4K
+    # to check. Its dedicated wizard runs once and sets setup_done.
+    if _is_android():
+        return bool(tracker.data.get("setup_done"))
     cfg = get_mpv_config_dir()
     if not (cfg / "mpv.conf").exists():
         return False
@@ -403,9 +416,49 @@ _TOOLS = [
 ]
 
 
+# Android package names per tool (installed via Termux `pkg` or proot `apt`).
+# The "player" is mpv-android (an APK from F-Droid), so it has no CLI package.
+_ANDROID_PKG_FOR = {
+    "yt-dlp": ("yt-dlp",),
+    "ffmpeg": ("ffmpeg",),
+    "aria2": ("aria2",),
+    "chafa": ("chafa",),
+}
+
+
+def _android_install_pkgs(pkgs: list) -> bool:
+    """Install packages via the device manager : Termux `pkg`, else proot `apt`."""
+    pkgs = [p for p in pkgs if p]
+    if not pkgs:
+        return True
+    if shutil.which("pkg"):
+        cmd = ["pkg", "install", "-y", *pkgs]
+    elif shutil.which("apt-get") or shutil.which("apt"):
+        base = ["apt-get" if shutil.which("apt-get") else "apt", "install", "-y", *pkgs]
+        is_root = getattr(os, "geteuid", lambda: 0)() == 0
+        cmd = base if is_root else (["sudo", *base] if shutil.which("sudo") else base)
+    else:
+        print_warning("No package manager found (pkg/apt). Install ffmpeg/aria2 manually.")
+        return False
+    try:
+        print_info(f"  Installing: {', '.join(pkgs)} …")
+        subprocess.run(cmd, check=False)
+        return True
+    except Exception:
+        return False
+
+
 def _have(bins) -> bool:
     if any(shutil.which(b) for b in bins) or _have_managed(bins):
         return True
+    # Android : the "player" is the external mpv-android app (an APK, never a
+    # PATH binary). Consider it satisfied when we can hand off via an intent.
+    if any(b in ("mpvnet", "mpv", "vlc") for b in bins) and _is_android():
+        try:
+            from .platform_android import available
+            return available()
+        except Exception:
+            return False
     # Windows: mpv.net / VLC are often installed OUTSIDE PATH (winget links dir,
     # Program Files…). Resolve them via their known locations so a real install
     # isn't reported missing (which kept re-triggering the player install).
@@ -480,6 +533,20 @@ def ensure_runtime_deps(auto_install: bool = True) -> bool:
         return True
 
     os_name = detect_os()
+
+    # ── Android : never download desktop x86_64 static builds. Install the
+    # CLI tools (ffmpeg/aria2/yt-dlp) from the device package manager instead.
+    if _is_android():
+        if auto_install:
+            need = [b for lbl, _i, bins, _e in _TOOLS
+                    for b in _ANDROID_PKG_FOR.get(lbl, ()) if not _have(bins)]
+            if need:
+                _android_install_pkgs(sorted(set(need)))
+        if runtime_ready():
+            tracker.data["system_deps_ok"] = True
+            tracker.data["system_deps_ok_version"] = _version
+            tracker._save_data()
+        return runtime_ready()
 
     # ── Self-managed binaries (primary) ────────────────────────────
     # Download static builds from GitHub Releases into our own bin dir.
@@ -1353,6 +1420,44 @@ def print_platform_guidance_macos(gpus: Dict[str, bool]):
 
 
 # ─── Top-level wizard ─────────────────────────────────────────────────
+def _run_android_setup() -> bool:
+    """First-run wizard for Android (Termux / proot) — installs the CLI tools
+    from the device package manager and guides the mpv-android + storage setup.
+    No mpv.conf / Anime4K / PRIME (playback is delegated to mpv-android)."""
+    print_info("─" * 60)
+    print_info("FreeFlix CLI — Android setup (Termux / proot)")
+    print_info("─" * 60)
+    print_info(t("This will :"))
+    print_info(f"  1. {t('Install ffmpeg + aria2 + chafa (package manager)')}")
+    print_info(f"  2. {t('Guide you to install mpv-android for playback')}")
+    print_info("")
+    try:
+        ans = input("Proceed? [Y/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print_info(t("Aborted."))
+        return False
+    if ans in ("n", "no"):
+        tracker.data["setup_declined"] = True
+        tracker._save_data()
+        return False
+
+    print_info("\n• Installing ffmpeg + aria2 + chafa…")
+    _android_install_pkgs(["ffmpeg", "aria2", "chafa"])
+
+    print_info("")
+    print_info(t("To play videos, install mpv-android (F-Droid):"))
+    print_info("  https://f-droid.org/packages/is.xyz.mpv/")
+    print_info(t("Then grant storage so downloads land in /sdcard/Download:"))
+    print_info("  termux-setup-storage")
+
+    tracker.set_player("android")
+    tracker.data["setup_done"] = True
+    tracker.data.pop("setup_declined", None)
+    tracker._save_data()
+    print_success("\n✓ Android setup complete. Launching FreeFlix…\n")
+    return True
+
+
 def run_setup(force: bool = False) -> bool:
     """
     Main entry point. Interactive wizard (uses input()) ; suppresses
@@ -1360,6 +1465,9 @@ def run_setup(force: bool = False) -> bool:
     """
     if is_setup_complete() and not force:
         return False
+
+    if _is_android():
+        return _run_android_setup()
 
     os_name = detect_os()
     gpus = detect_gpus()
