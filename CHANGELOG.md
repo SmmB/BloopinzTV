@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.9.3
+
+### 🛡️ Plus de crash quand une source est injoignable
+- Une erreur réseau sur une source (**connexion resetée**, DNS/TLS, timeout)
+  remontait **non-attrapée et fermait toute l'appli**. Désormais elle affiche un
+  **panneau propre « source injoignable »** et revient à la liste des sources —
+  quelle que soit la source. En plus, `get_website_url` (Anime-Sama) passe par
+  le chemin résilient (retries + repli requête simple + **DoH**), donc un
+  premier appel qui foire ne casse plus tout.
+
+### 📱 Mode Android (Termux / proot)
+- Nouveau `platform_android` : détecte **Termux / proot Android** et **délègue
+  la lecture** à un lecteur Android externe (**mpv-android**, puis VLC) via un
+  intent `am start` qui lit le proxy local `127.0.0.1` (loopback partagé →
+  injection des headers + réécriture m3u8 conservées). Pas besoin d'écran.
+- Nouveau lecteur **« android »** (proposé/défaut sur Android ; une préférence
+  mpv/vlc desktop est redirigée automatiquement). Téléchargements vers
+  `/sdcard/Download/FreeFlix`.
+- **Setup de premier lancement Android** dédié : installe ffmpeg/aria2/chafa via
+  `pkg`/`apt`, guide l'install de **mpv-android** + `termux-setup-storage` — au
+  lieu du parcours desktop (mpv.conf/Anime4K/PRIME). Plus de téléchargement de
+  binaires x86_64 sur Android.
+
 ## 1.9.2
 
 Suite de l'audit d'optimisation — 4 chantiers, testés Linux + Windows (CI verte
