@@ -54,6 +54,41 @@ def _stop_proxy_if_running():
             pass
 
 
+def _source_error_panel(source_name: str, exc: Exception) -> None:
+    """Show a clean, friendly panel when a source handler fails (unreachable
+    host, TLS/DNS reset, timeout…) instead of dumping a traceback and crashing.
+    """
+    from rich.panel import Panel
+    from rich.text import Text
+    from .themes import color
+
+    msg = str(exc) or exc.__class__.__name__
+    low = (msg + " " + exc.__class__.__name__).lower()
+    network = any(k in low for k in (
+        "connection reset", "reset by peer", "recv failure", "connection", "timed out",
+        "timeout", "resolve", "getaddrinfo", "dns", "ssl", "curlerror", "(56)", "(35)",
+        "(28)", "(7)", "(6)", "connect", "unreachable", "refused",
+    ))
+
+    body = Text()
+    if network:
+        body.append(f"  {icon('offline')} ", style=color("warning"))
+        body.append(f"{source_name} : {t('source unreachable')}\n\n",
+                    style=f"bold {color('warning')}")
+        body.append(f"  {t('The site is down or your network/ISP is blocking it. Try again later, or another source.')}\n",
+                    style=color("dim"))
+        body.append(f"  {t('Tip: a VPN or the Cloudflare/FlareSolverr settings can help.')}",
+                    style=color("dim"))
+    else:
+        body.append(f"  {icon('exit')} {t('Something went wrong with this source.')}\n\n",
+                    style=f"bold {color('error')}")
+        body.append(f"  {msg[:300]}", style=color("dim"))
+
+    console.print(Panel(body, border_style=color("warning" if network else "error"),
+                        title=f"[{color('header')}]{source_name}[/]", title_align="left"))
+    pause()
+
+
 def _handle_partial_download(it):
     """Resume or delete an interrupted download from .temp/."""
     import shutil as _sh
@@ -968,7 +1003,15 @@ def main():
                     break  # ← Back → home menu
                 # Deeper menus inside the handler inherit this trail.
                 crumb_push(ordered[p_idx]["name"])
-                ordered[p_idx]["handler"]()
+                # Safety net : a source being unreachable (connection reset,
+                # DNS/TLS failure, timeout…) must show a clean message and
+                # return to the source list — never crash the whole app.
+                try:
+                    ordered[p_idx]["handler"]()
+                except KeyboardInterrupt:
+                    pass  # Ctrl-C inside a source → back to the source list
+                except Exception as exc:
+                    _source_error_panel(ordered[p_idx]["name"], exc)
             continue
 
         if choice_idx == settings_idx:

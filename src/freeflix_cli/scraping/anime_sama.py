@@ -61,21 +61,29 @@ def get_website_url(portal=portals["anime-sama"]):
     if website_origin:
         return
 
-    if portal.startswith("http"):
-        response = scraper.get(portal, timeout=20)
-    else:
-        response = scraper.get("https://" + portal, timeout=20)
+    base = portal if portal.startswith("http") else "https://" + portal
+
+    # Route through cf_get : it retries transient "Connection reset by peer"
+    # errors, then falls back to a plain request and finally DoH (bypasses ISP
+    # DNS blocking of these hosts) — so a flaky first hit doesn't fail outright.
+    response = cloudflare.cf_get(scraper, base, timeout=20)
+    if response is None:
+        raise RuntimeError("Anime-Sama unreachable (network/DNS/TLS).")
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html5lib")
 
     btn = soup.find("a", {"class": "btn-primary"})
-    recommanded_url = btn.attrs["href"] if btn else portal
+    recommanded_url = btn.attrs["href"] if btn else base
 
-    response = scraper.head(recommanded_url, timeout=20)
-    response.raise_for_status()
-
-    website_origin = response.url
+    # Resolve the final mirror (follows redirects). cf_get already follows them,
+    # so response.url is the settled origin.
+    resp2 = cloudflare.cf_get(scraper, recommanded_url, timeout=20)
+    if resp2 is None:
+        website_origin = recommanded_url.rstrip("/")
+        return
+    resp2.raise_for_status()
+    website_origin = str(resp2.url).rstrip("/")
 
 
 def search(query: str) -> list[SearchResult]:
