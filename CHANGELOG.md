@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.5
+
+### 📱 Android : téléchargements + lecture des fichiers locaux
+- Le **setup Android installe désormais `yt-dlp`** (en plus de ffmpeg/aria2/chafa).
+  Sans lui, les téléchargements HLS échouaient (aria2c ne gère que les .mp4
+  directs). *(Merci au retour terrain — Termux natif, Huawei.)*
+- La **lecture d'un fichier déjà téléchargé** (gestionnaire de téléchargements)
+  passe maintenant par **mpv-android** via un intent `file://` — au lieu de
+  chercher un binaire mpv/vlc local qui n'existe pas sur Android.
+
 ## 1.9.4
 
 ### 📱 Lecture Android : « rien ne s'ouvrait » — corrigé + honnête

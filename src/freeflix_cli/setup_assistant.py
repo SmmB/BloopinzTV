@@ -1428,7 +1428,7 @@ def _run_android_setup() -> bool:
     print_info("FreeFlix CLI — Android setup (Termux / proot)")
     print_info("─" * 60)
     print_info(t("This will :"))
-    print_info(f"  1. {t('Install ffmpeg + aria2 + chafa (package manager)')}")
+    print_info(f"  1. {t('Install yt-dlp + ffmpeg + aria2 + chafa (package manager)')}")
     print_info(f"  2. {t('Guide you to install mpv-android for playback')}")
     print_info("")
     try:
@@ -1441,8 +1441,10 @@ def _run_android_setup() -> bool:
         tracker._save_data()
         return False
 
-    print_info("\n• Installing ffmpeg + aria2 + chafa…")
-    _android_install_pkgs(["ffmpeg", "aria2", "chafa"])
+    # yt-dlp is REQUIRED to download HLS streams (aria2c only handles direct
+    # mp4). It was missing from the list before — every HLS download failed.
+    print_info("\n• Installing yt-dlp + ffmpeg + aria2 + chafa…")
+    _android_install_pkgs(["yt-dlp", "ffmpeg", "aria2", "chafa"])
 
     print_info("")
     print_info(t("To play videos, install mpv-android (F-Droid):"))

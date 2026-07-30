@@ -265,8 +265,8 @@ _FR = {
     "Tip: a VPN or the Cloudflare/FlareSolverr settings can help.":
         "Astuce : un VPN ou les réglages Cloudflare/FlareSolverr peuvent aider.",
     "Something went wrong with this source.": "Un problème est survenu avec cette source.",
-    "Install ffmpeg + aria2 + chafa (package manager)":
-        "Installer ffmpeg + aria2 + chafa (gestionnaire de paquets)",
+    "Install yt-dlp + ffmpeg + aria2 + chafa (package manager)":
+        "Installer yt-dlp + ffmpeg + aria2 + chafa (gestionnaire de paquets)",
     "Guide you to install mpv-android for playback":
         "Te guider pour installer mpv-android (lecture vidéo)",
     "To play videos, install mpv-android (F-Droid):":

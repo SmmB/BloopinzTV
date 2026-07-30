@@ -221,10 +221,28 @@ def _browse_local_downloads():
         if act != 0:
             continue
 
+        # Android : no local mpv/vlc binary — hand the local FILE to the
+        # external Android player (mpv-android) via a file:// intent.
+        from . import platform_android
+        if platform_android.is_android():
+            import urllib.parse as _up
+            file_uri = "file://" + _up.quote(os.path.abspath(payload))
+            ok, label, diag = platform_android.launch_player(file_uri,
+                                                             title=os.path.basename(payload))
+            if ok:
+                toast(f"{t('Playing in')} {label}")
+            else:
+                print_error(t("Could not launch the Android player."))
+                if diag:
+                    console.print(f"[dim]{diag[:300]}[/dim]")
+                console.print(f"[dim]{platform_android.diagnose()}[/dim]")
+                pause()
+            continue
+
         preferred = tracker.get_player() or "mpv"
         player_bin = None
         for cand in [preferred, "mpv", "vlc"]:
-            if cand in ("download", "browser", "manual"):
+            if cand in ("download", "browser", "manual", "android"):
                 continue
             b = shutil.which(cand)
             if b:
