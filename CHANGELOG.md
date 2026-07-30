@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.9.4
+
+### 📱 Lecture Android : « rien ne s'ouvrait » — corrigé + honnête
+- Le lanceur Android renvoyait un **faux succès** (« Lecture dans Android… »)
+  alors que rien ne se lançait. Il **vérifie maintenant réellement** que
+  l'intent a été accepté, et essaie dans l'ordre **mpv-android → VLC →
+  `termux-open` → sélecteur générique**.
+- **Détection proot** : sous proot, le `am` d'Android **ne peut pas** lancer
+  d'apps (limitation kernel/`app_process`, confirmée). FreeFlix l'explique
+  désormais **clairement** — au lancement ET dès le setup — avec la marche à
+  suivre : **lancer FreeFlix dans Termux** (`pip install curl_cffi --pre`,
+  wheels Android beta) ou **Termux:X11 + mpv**.
+- En cas d'échec, un **diagnostic** (`env=…  am=…  termux-open=…` + sortie de
+  la commande) s'affiche pour comprendre pourquoi.
+
 ## 1.9.3
 
 ### 🛡️ Plus de crash quand une source est injoignable

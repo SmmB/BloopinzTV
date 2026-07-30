@@ -1676,9 +1676,17 @@ def play_video(
                 print_error(t("No Android player found — install mpv-android (F-Droid)."))
                 return False
 
-            ok, label = platform_android.launch_player(local_stream_url, title=title)
+            ok, label, diag = platform_android.launch_player(local_stream_url, title=title)
             if not ok:
                 print_error(t("Could not launch the Android player."))
+                if platform_android.is_proot():
+                    # am can't run under proot — this is the usual cause.
+                    print_warning(t("Under proot, Android's 'am' can't launch apps. "
+                                    "Run FreeFlix directly in Termux (pip install curl_cffi --pre), "
+                                    "or use Termux:X11 + mpv."))
+                if diag:
+                    console.print(f"[dim]{diag[:400]}[/dim]")
+                console.print(f"[dim]{platform_android.diagnose()}[/dim]")
                 return False
 
             print_success(f"{t('Playing in')} {label} …")

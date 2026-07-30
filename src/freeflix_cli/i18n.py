@@ -255,6 +255,8 @@ _FR = {
     "No Android player found — install mpv-android (F-Droid).":
         "Aucun lecteur Android trouvé — installe mpv-android (F-Droid).",
     "Could not launch the Android player.": "Impossible de lancer le lecteur Android.",
+    "Under proot, Android's 'am' can't launch apps. Run FreeFlix directly in Termux (pip install curl_cffi --pre), or use Termux:X11 + mpv.":
+        "Sous proot, le 'am' d'Android ne peut pas lancer d'apps. Lance FreeFlix directement dans Termux (pip install curl_cffi --pre), ou utilise Termux:X11 + mpv.",
     "Playing in": "Lecture dans",
     "Press Enter when the episode is finished": "Appuie sur Entrée quand l'épisode est terminé",
     "source unreachable": "source injoignable",
@@ -271,6 +273,8 @@ _FR = {
         "Pour lire les vidéos, installe mpv-android (F-Droid) :",
     "Then grant storage so downloads land in /sdcard/Download:":
         "Puis autorise le stockage pour que les téléchargements aillent dans /sdcard/Download :",
+    "Heads-up : you're in proot. Android playback needs Termux — run FreeFlix directly in Termux (pip install curl_cffi --pre), or set up Termux:X11 + mpv.":
+        "Attention : tu es sous proot. La lecture Android nécessite Termux — lance FreeFlix directement dans Termux (pip install curl_cffi --pre), ou configure Termux:X11 + mpv.",
     "Icon Style": "Style d'icônes",
     "Cloudflare token": "Token Cloudflare",
     "Data used": "Données consommées",

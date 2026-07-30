@@ -1450,6 +1450,18 @@ def _run_android_setup() -> bool:
     print_info(t("Then grant storage so downloads land in /sdcard/Download:"))
     print_info("  termux-setup-storage")
 
+    # Under proot, Android's `am` can't launch apps, so external playback won't
+    # work — warn now instead of at play time.
+    try:
+        from .platform_android import is_proot
+        if is_proot():
+            print_warning("")
+            print_warning(t("Heads-up : you're in proot. Android playback needs Termux — "
+                            "run FreeFlix directly in Termux (pip install curl_cffi --pre), "
+                            "or set up Termux:X11 + mpv."))
+    except Exception:
+        pass
+
     tracker.set_player("android")
     tracker.data["setup_done"] = True
     tracker.data.pop("setup_declined", None)
