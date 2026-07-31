@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.11
+
+### 🎨 Esthétique
+- **Logo de lancement** : un wordmark ASCII « FREEFLIX » coloré au thème
+  s'affiche au démarrage (ignoré hors terminal / fenêtre trop étroite).
+- **Accueil enrichi** : vraies **barres de progression** pour « Reprendre »
+  (la durée de l'épisode est désormais mémorisée avec la position), et le
+  **poster** du dernier titre regardé s'affiche à gauche quand il est déjà en
+  cache (préchargé en arrière-plan → l'accueil reste instantané).
+- **Panneaux** : bordures **arrondies** explicites + espacement cohérent
+  (accueil + en-têtes) pour un rendu plus doux et uniforme.
+
 ## 1.9.10
 
 ### ⚙️ Réglages
