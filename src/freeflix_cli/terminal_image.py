@@ -122,6 +122,12 @@ def _color_args() -> list:
     return []
 
 
+def _quality_args() -> list:
+    """Max chafa work factor : better symbol/color matching → noticeably sharper
+    output (posters are small, so the extra CPU is negligible)."""
+    return ["--work", "9"]
+
+
 def _poster_size():
     """
     Responsive poster size (columns x rows) derived from the live terminal
@@ -256,7 +262,8 @@ def render_url(url: str, width: int = None, height: int = None) -> bool:
 
     try:
         cmd = [_CHAFA_PATH, "--size", f"{width}x{height}"]
-        cmd += _color_args()   # crisp truecolor when the terminal supports it
+        cmd += _color_args()      # crisp truecolor when the terminal supports it
+        cmd += _quality_args()    # max work factor → sharper
         # Prefer a real graphics protocol (kitty/iterm = photo quality) when we
         # can confirm the terminal speaks it; "sixel" forces sixels; otherwise
         # leave it to chafa's own autodetection (blocks as a last resort).
@@ -299,7 +306,7 @@ def render_to_text(url: str, cols: int = 30, rows: int = 16):
                 # search on Windows (only the direct full-screen render worked).
                 out = subprocess.run(
                     [_CHAFA_PATH, "--format", "symbols", *_color_args(),
-                     "--size", f"{cols}x{rows}", path],
+                     *_quality_args(), "--size", f"{cols}x{rows}", path],
                     capture_output=True, text=True, timeout=8,
                     encoding="utf-8", errors="replace",
                 ).stdout

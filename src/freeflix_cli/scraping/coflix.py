@@ -91,44 +91,78 @@ def _clean_image(raw: str) -> str:
     return ""
 
 
+def _norm_img(src: str) -> str:
+    """Normalise a cover URL (Coflix serves protocol-relative //image.tmdb.org)."""
+    src = (src or "").strip()
+    if src.startswith("//"):
+        return "https:" + src
+    return src
+
+
+def _search_html(query: str) -> list[SearchResult]:
+    """
+    Search via the site's own results page (/?s=…). Each result is a
+    ``.md-manga-card`` whose <a> gives the /film|serie/ URL and whose <img>
+    carries BOTH the poster (src) and the title (alt) — so the preview pane
+    gets real posters, unlike the imageless WP REST endpoint.
+    """
+    page = website_origin.rstrip("/") + "/?s=" + urllib.parse.quote(query)
+    response = _get(page)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html5lib")
+
+    results: list[SearchResult] = []
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if not re.search(r"/(film|serie)/[^/]+/?$", href) or href in seen:
+            continue
+        img = a.find("img") or (a.parent.find("img") if a.parent else None)
+        if img is None:
+            continue
+        title = (img.get("alt") or "").strip()
+        cover = _norm_img(img.get("src") or img.get("data-src") or "")
+        if not title:
+            continue
+        seen.add(href)
+        results.append(SearchResult(title, href, cover, []))
+    return results
+
+
 def search(query: str) -> list[SearchResult]:
     """
-    Search Coflix. The site moved to WordPress (the old /suggest.php now 500s),
-    so we use the standard WP REST search endpoint, which returns id/url/title/
-    subtype (movies|series) for any post type. Robust : any HTTP/JSON error or
-    a block yields an empty list instead of crashing.
+    Search Coflix (now a WordPress site — the old /suggest.php 500s). Primary:
+    the HTML results page, which carries posters + titles. Fallback: the WP REST
+    search endpoint (titles only) if the HTML layout ever yields nothing.
     """
-    page = (website_origin.rstrip("/")
-            + "/wp-json/wp/v2/search?per_page=20&search=" + urllib.parse.quote(query))
-
     try:
-        response = _get(page)
+        results = _search_html(query)
+        if results:
+            return results
     except Exception:
-        return []  # network error → no results
+        pass
 
-    if getattr(response, "status_code", None) == 429:
-        raise RuntimeError("Coflix 429 — search temporarily blocked by the site")
-
+    # Fallback : WP REST search (no poster, but reliable titles/urls).
     try:
+        page = (website_origin.rstrip("/")
+                + "/wp-json/wp/v2/search?per_page=20&search=" + urllib.parse.quote(query))
+        response = _get(page)
+        if getattr(response, "status_code", None) == 429:
+            raise RuntimeError("Coflix 429 — search temporarily blocked by the site")
         response.raise_for_status()
         data = response.json()
+    except RuntimeError:
+        raise
     except Exception:
         return []
 
     if not isinstance(data, list):
         return []
-
-    results: list[SearchResult] = []
-    for result in data:
-        if not isinstance(result, dict):
-            continue
-        title = result.get("title")
-        url = result.get("url")
-        if not title or not url:
-            continue
-        # WP search doesn't carry a poster ; it's fetched on the detail page.
-        results.append(SearchResult(title, url, "", []))
-    return results
+    out: list[SearchResult] = []
+    for r in data:
+        if isinstance(r, dict) and r.get("title") and r.get("url"):
+            out.append(SearchResult(r["title"], r["url"], "", []))
+    return out
 
 
 def get_players(players_url: str) -> list[Player]:
@@ -276,8 +310,17 @@ def _extract_cover(soup, html: str = "") -> str:
         d = soup.find("div", {"class": cls})
         if d and d.find("img"):
             candidates.append(d.find("img").attrs.get("src", ""))
+    # WordPress theme : the main poster is an <img> whose src is a TMDB poster
+    # (…/t/p/w500/…). Prefer w500 (the cover) over w342 (episode/related thumbs).
+    tmdb_imgs = [
+        i.get("src", "") for i in soup.find_all("img")
+        if "image.tmdb.org/t/p/" in (i.get("src") or "")
+    ]
+    candidates += [s for s in tmdb_imgs if "/w500/" in s]
+    candidates += tmdb_imgs
     if html:
-        m = re.search(r'https?:?//image\.tmdb\.org/t/p/w\d+/[^"\'\s>]+', html)
+        # protocol-relative //image.tmdb.org/… (no scheme) too.
+        m = re.search(r'(?:https?:)?//image\.tmdb\.org/t/p/w\d+/[^"\'\s>]+', html)
         if m:
             candidates.append(m.group(0))
 
