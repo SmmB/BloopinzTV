@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.9.6
+
+### 🎬 Coflix réparé (le site est passé sous WordPress)
+- Coflix ne renvoyait **plus rien** : l'ancienne recherche `/suggest.php` renvoie
+  désormais une erreur 500 et la mise en page des séries a changé. Corrigé :
+  - **recherche** via l'API WordPress `/wp-json/wp/v2/search` ;
+  - **séries/saisons/épisodes** relus depuis le nouveau thème (onglets de saison
+    + panneaux d'épisodes) — tous les épisodes sont dans la page ;
+  - `get_website_url` passe par le chemin résilient (retries + DoH) → un flake
+    DNS sur le miroir ne casse plus la source.
+  - Vérifié en direct : recherche OK, 8 saisons, **13 lecteurs** par épisode,
+    9 lecteurs par film.
+
+### 🖼️ Posters chafa plus nets selon les machines
+- Sur certaines distros / sessions SSH, `COLORTERM` n'est pas transmis → chafa
+  sous-estime les couleurs (256/16) → posters **flous / en bandes**. Quand le
+  terminal déclare **truecolor**, on force maintenant `--colors full` (uniquement
+  vers le haut, jamais vers le bas) → posters nets.
+
 ## 1.9.5
 
 ### 📱 Android : téléchargements + lecture des fichiers locaux
