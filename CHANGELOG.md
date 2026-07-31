@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.8
+
+### 🎭 French-Stream : fini la fausse vidéo « troll »
+- Quand tu cliquais sur un film French-Stream, ça jouait parfois une **vidéo
+  leurre** (`s1.fsvid.lol/troll/…`) au lieu du vrai contenu — c'est un piège
+  anti-scraper que l'hébergeur maison (fsvid.lol) sert aux bots. FreeFlix
+  **rejette maintenant ces flux leurre** (`/troll/`, `/fake/`, `/decoy/`…), donc
+  ces lecteurs sont marqués indisponibles et la lecture bascule sur un
+  hébergeur qui renvoie **le vrai stream** (uqload, etc.).
+
 ## 1.9.7
 
 ### 🖼️ Coflix : les pochettes reviennent + aperçu plus net
