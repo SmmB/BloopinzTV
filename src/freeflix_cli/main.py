@@ -1065,6 +1065,18 @@ def main():
 
                 # ── Actions (each setting's handler) ──
                 def _a_token():
+                    # When a token is already set, let the user CHANGE it or
+                    # REMOVE it (removing also hides the AniList resume on the
+                    # home screen, which is gated on the token being present).
+                    if tracker.get_anilist_token():
+                        i = _pick([t("Change token"), t("Remove AniList")],
+                                  t("AniList account:"))
+                        if i is None:
+                            return
+                        if i == 1:
+                            tracker.set_anilist_token("")
+                            toast(t("AniList removed."))
+                            return
                     nt = get_user_input(t("Enter new AniList Token"))
                     if nt:
                         tracker.set_anilist_token(nt)
@@ -1197,30 +1209,39 @@ def main():
                 # ── (category, label, action) — grouped in the menu ──
                 PLY, DL, APP, ACC, AB = (t("Playback"), t("Downloads"),
                                          t("Appearance"), t("Accounts"), t("About"))
+                # Sub-settings carry NO icon — the icon lives on the category
+                # header only (below), so the list stays clean.
                 entries = [
                     (PLY, f"{t('Choose default Player')} ({player_display})", _a_player),
                     (PLY, f"Nvidia GPU offload ({nv_mode})", _a_nvidia),
                     (PLY, f"{t('Analyze players (resolutions/bitrate)')} ({'ON' if tracker.get_analyze_players() else 'OFF'})", _a_analyze),
                     (DL, f"{t('Download Quality')} ({quality})", _a_quality),
                     (DL, f"{t('Parallel Downloads')} ({par_n})", _a_parallel),
-                    (DL, f"{icon('subtitle')} {t('Download subtitles')} ({'ON' if tracker.get_subtitle_search() else 'OFF'})", _a_subs),
-                    (APP, f"{icon('theme')} {t('Theme')} ({theme_label})", _a_theme),
-                    (APP, f"{icon('poster')} {t('Show Posters')} ({tracker.get_poster_mode()})", _a_posters),
-                    (APP, f"{icon('theme')} {t('Icon Style')} ({tracker.get_icon_style()})", _a_icons),
+                    (DL, f"{t('Download subtitles')} ({'ON' if tracker.get_subtitle_search() else 'OFF'})", _a_subs),
+                    (APP, f"{t('Theme')} ({theme_label})", _a_theme),
+                    (APP, f"{t('Show Posters')} ({tracker.get_poster_mode()})", _a_posters),
+                    (APP, f"{t('Icon Style')} ({tracker.get_icon_style()})", _a_icons),
                     (APP, f"{t('Update Language')} ({lang_display})", _a_lang),
                     (APP, f"{t('Update Anime Language')} ({anime_lang_display})", _a_anime_lang),
-                    (APP, f"{icon('repeat')} {t('Clear HTTP cache')} ({_cache_label()})", _a_clear_cache),
+                    (APP, f"{t('Clear HTTP cache')} ({_cache_label()})", _a_clear_cache),
                     (ACC, f"{t('Update AniList Token')} ({'Set' if token else 'Not Set'})", _a_token),
                     (ACC, f"{t('OpenSubtitles API Key')} ({'Set' if os_key else 'Not Set'})", _a_ossub),
                     (ACC, f"{t('Cloudflare token')}", _set_cloudflare_token),
                     (ACC, f"{t('Daily New-Episode Notifications')} ({'ON' if notif_on else 'OFF'})", _a_notif),
-                    (AB, f"{icon('info')} {t('About')}", lambda: (_show_about(_VERSION), pause())),
+                    (AB, f"{t('About')}", lambda: (_show_about(_VERSION), pause())),
                 ]
+
+                # Category → icon : icons appear ONLY on the big section titles.
+                cat_icon = {
+                    PLY: icon("play"), DL: icon("download"), APP: icon("theme"),
+                    ACC: icon("globe"), AB: icon("info"),
+                }
 
                 labels, actions, group_headers, last_cat = [], [], {}, None
                 for cat, label, fn in entries:
                     if cat != last_cat:
-                        group_headers[len(labels)] = cat
+                        ic = cat_icon.get(cat, "")
+                        group_headers[len(labels)] = f"{ic} {cat}".strip()
                         last_cat = cat
                     labels.append(label)
                     actions.append(fn)
