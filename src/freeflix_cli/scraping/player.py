@@ -594,6 +594,19 @@ def get_hls_link_xtremestream(url, headers):
     return f"https://{url_root}/player/xs1.php?data={data_id}"
 
 
+# Anti-scraper DECOY streams : some hosts return a placeholder ("troll") video
+# to non-browser clients instead of the real content. These substrings in a
+# RESOLVED stream URL mark it as fake so we skip that player.
+_DECOY_STREAM_MARKERS = ("/troll/", "/fake/", "/decoy/", "/notfound/", "/error/")
+
+
+def _is_decoy_stream(link) -> bool:
+    if not link:
+        return False
+    low = str(link).lower()
+    return any(marker in low for marker in _DECOY_STREAM_MARKERS)
+
+
 def get_hls_link(url: str, headers: dict = None) -> str | None:
     """
     Extract HLS/video link from a player URL.
@@ -613,30 +626,37 @@ def get_hls_link(url: str, headers: dict = None) -> str | None:
             _set_apc(config)
             parse_type = config["type"]
 
+            link = None
             if parse_type == "default":
-                return get_hls_link_default(url, headers)
+                link = get_hls_link_default(url, headers)
             elif parse_type == "sendvid":
-                return get_hls_link_sendvid(url)
+                link = get_hls_link_sendvid(url)
             elif parse_type == "sibnet":
-                return get_hls_link_sibnet(url)
+                link = get_hls_link_sibnet(url)
             elif parse_type == "uqload":
-                return get_hls_link_uqload(url, headers)
+                link = get_hls_link_uqload(url, headers)
             elif parse_type == "vidoza":
-                return get_hls_link_vidoza(url, headers)
+                link = get_hls_link_vidoza(url, headers)
             elif parse_type == "filemoon":
-                return get_hls_link_filemoon(url, headers)
+                link = get_hls_link_filemoon(url, headers)
             elif parse_type == "kakaflix":
-                return get_hls_link_kakaflix(url, headers)
+                link = get_hls_link_kakaflix(url, headers)
             elif parse_type == "myvidplay":
-                return get_hls_link_myvidplay(url, headers)
+                link = get_hls_link_myvidplay(url, headers)
             elif parse_type == "vidmoly":
-                return get_hls_link_vidmoly(url, headers)
+                link = get_hls_link_vidmoly(url, headers)
             elif parse_type == "embed4me":
-                return get_hls_link_embed4me(url)
+                link = get_hls_link_embed4me(url)
             elif parse_type == "veev":
-                return get_hls_link_veev(url)
+                link = get_hls_link_veev(url)
             elif parse_type == "xtremestream":
-                return get_hls_link_xtremestream(url, headers)
+                link = get_hls_link_xtremestream(url, headers)
+
+            # Some hosts (e.g. french-stream's fsvid.lol) serve an anti-scraper
+            # DECOY stream — a "troll" placeholder video — to non-browser
+            # clients. Reject it so the player is marked unavailable and the
+            # user falls back to a host that actually returns the real content.
+            return None if _is_decoy_stream(link) else link
 
     _set_apc(None)
     return None
