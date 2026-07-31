@@ -108,6 +108,20 @@ def _render_format(mode: str):
     return None
 
 
+def _color_args() -> list:
+    """
+    Force full (truecolor) output when the terminal advertises it, so posters
+    stay sharp. Cross-distro/SSH sessions often don't propagate COLORTERM, so
+    chafa mis-detects the depth and falls back to 256/16 colors → visibly
+    BLURRY / banded. We only UPGRADE to full when we're sure (COLORTERM says
+    truecolor) — never downgrade — so this can't make any terminal look worse.
+    """
+    ct = (os.environ.get("COLORTERM") or "").lower()
+    if "truecolor" in ct or "24bit" in ct:
+        return ["--colors", "full"]
+    return []
+
+
 def _poster_size():
     """
     Responsive poster size (columns x rows) derived from the live terminal
@@ -242,6 +256,7 @@ def render_url(url: str, width: int = None, height: int = None) -> bool:
 
     try:
         cmd = [_CHAFA_PATH, "--size", f"{width}x{height}"]
+        cmd += _color_args()   # crisp truecolor when the terminal supports it
         # Prefer a real graphics protocol (kitty/iterm = photo quality) when we
         # can confirm the terminal speaks it; "sixel" forces sixels; otherwise
         # leave it to chafa's own autodetection (blocks as a last resort).
@@ -283,7 +298,8 @@ def render_to_text(url: str, cols: int = 30, rows: int = 16):
                 # UnicodeDecodeError, so posters silently never rendered during
                 # search on Windows (only the direct full-screen render worked).
                 out = subprocess.run(
-                    [_CHAFA_PATH, "--format", "symbols", "--size", f"{cols}x{rows}", path],
+                    [_CHAFA_PATH, "--format", "symbols", *_color_args(),
+                     "--size", f"{cols}x{rows}", path],
                     capture_output=True, text=True, timeout=8,
                     encoding="utf-8", errors="replace",
                 ).stdout
