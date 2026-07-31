@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.7
+
+### 🖼️ Coflix : les pochettes reviennent + aperçu plus net
+- Depuis la migration WordPress, l'API de recherche ne renvoyait **pas de
+  pochette** → l'aperçu et la vignette après sélection étaient vides. Corrigé :
+  - la recherche lit désormais la **grille de résultats du site** (`/?s=`) où
+    chaque carte porte la **pochette** (image) **et** le titre (alt) ;
+  - la page détail extrait la **pochette TMDB** (`/w500/`, y compris les URL
+    `//image.tmdb.org` sans schéma que l'ancien filtre ratait).
+- **Aperçu chafa plus net** : on passe `--work 9` (facteur de qualité max de
+  chafa) aux deux rendus, en plus du truecolor. NB : l'aperçu reste en mode
+  **symboles** (il est intégré dans l'interface texte) — il ne peut pas être en
+  vraie image comme le plein écran, mais il est maintenant au maximum de netteté.
+
 ## 1.9.6
 
 ### 🎬 Coflix réparé (le site est passé sous WordPress)
