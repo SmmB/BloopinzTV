@@ -1172,10 +1172,12 @@ def spinner(message: str):
 def _header_panel(text: str) -> Panel:
     """Build the decorative header panel (shared so the static print and the
     in-Live header stay pixel-identical and reflow the same way)."""
+    from rich import box as _box
     return Panel(
         Text(iconify(text), style=color("header"), justify="center"),
         style=color("accent"),
         border_style=color("border"),
+        box=_box.ROUNDED,
         padding=(0, 2),
     )
 

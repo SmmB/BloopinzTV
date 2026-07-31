@@ -313,14 +313,66 @@ def _show_stats():
     pause()
 
 
+_SPLASH_ART = r"""
+ ███████╗██████╗ ███████╗███████╗███████╗██╗     ██╗██╗  ██╗
+ ██╔════╝██╔══██╗██╔════╝██╔════╝██╔════╝██║     ██║╚██╗██╔╝
+ █████╗  ██████╔╝█████╗  █████╗  █████╗  ██║     ██║ ╚███╔╝
+ ██╔══╝  ██╔══██╗██╔══╝  ██╔══╝  ██╔══╝  ██║     ██║ ██╔██╗
+ ██║     ██║  ██║███████╗███████╗██║     ███████╗██║██╔╝ ██╗
+ ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝╚═╝  ╚═╝
+"""
+
+
+def _splash(version: str) -> None:
+    """Themed ASCII wordmark shown once at launch. Skipped on a non-terminal
+    or a very small window (falls back to nothing so scripts stay clean)."""
+    try:
+        if not console.is_terminal:
+            return
+        import time as _time
+        from rich.text import Text
+        from rich.align import Align
+        from .themes import color
+
+        if console.size.width < 62:   # too narrow for the art → skip
+            return
+        clear_screen()
+        art = Text(_SPLASH_ART.strip("\n"), style=f"bold {color('accent')}")
+        tag = Text(f"terminal cinema · v{version}", style=color("dim"))
+        console.print()
+        console.print(Align.center(art))
+        console.print(Align.center(tag))
+        _time.sleep(0.9)   # brief beat, then straight into the menu
+    except Exception:
+        pass
+
+
+def _progress_bar_text(pct: int, width: int = 14):
+    """A small themed progress bar : ▐████░░░░▌ 68%."""
+    from rich.text import Text
+    from .themes import color
+    pct = max(0, min(100, int(pct)))
+    filled = int(round(pct / 100 * width))
+    t = Text()
+    t.append("▐", style=color("dim"))
+    t.append("█" * filled, style=color("success"))
+    t.append("░" * (width - filled), style=color("dim"))
+    t.append("▌", style=color("dim"))
+    t.append(f" {pct}%", style=color("info"))
+    return t
+
+
 def _home_dashboard():
     """
     The enriched home 'wow' panel: a greeting, a quick stats line and a
-    Continue-watching carousel — all from LOCAL data (instant, no network).
-    Returned as a renderable placed above the home menu.
+    Continue-watching carousel with real progress bars + the last title's
+    poster — all from LOCAL data (instant, no network). The poster is drawn
+    only if it's already in the render cache (warmed in the background), so the
+    home stays instant.
     """
     from rich.panel import Panel
     from rich.text import Text
+    from rich import box
     from .themes import color
     from datetime import datetime
 
@@ -347,24 +399,64 @@ def _home_dashboard():
         body.append(f"{len(_new)}", style=f"bold {color('accent')}")
 
     if history:
-        from .player_manager import episode_badges
-        body.append(f"\n\n  {icon('play')} {t('Continue watching')}",
+        from .player_manager import episode_progress
+        body.append(f"\n\n  {icon('play')} {t('Continue watching')}\n",
                     style=f"bold {color('header')}")
         for e in history[:4]:
             s = e.get("series_title", "?")
             se = e.get("season_title", "") or ""
             ep = e.get("episode_title", "") or ""
-            badge = episode_badges(s, se, ep)
-            row = f"     • {s}" + (f" · {se}" if se else "") + (f" · {ep}" if ep else "")
-            body.append("\n" + row[:74], style="white")
-            if badge:
-                body.append(badge, style=color("info"))
+            label = s + (f" · {se}" if se else "") + (f" · {ep}" if ep else "")
+            body.append(f"\n   • {label[:44]}", style="white")
+            pos, dur = episode_progress(s, se, ep)
+            if pos and dur and dur > 0:
+                body.append("   ")
+                body.append_text(_progress_bar_text(int(pos / dur * 100), width=12))
+            elif pos and pos > 30:
+                body.append(f"   ▸ {int(pos // 60)}m", style=color("info"))
     else:
         body.append(f"\n\n  {t('Nothing watched yet — pick a source below to start!')}",
                     style=color("dim"))
 
-    return Panel(body, border_style=color("accent"), expand=True,
-                 title="[bold]FreeFlix[/bold]", title_align="left")
+    inner = _home_with_poster(history, body)
+
+    return Panel(inner, border_style=color("accent"), expand=True, box=box.ROUNDED,
+                 padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left")
+
+
+def _home_with_poster(history, body):
+    """Compose the last-watched poster (left) + info (right) when the poster is
+    already rendered in cache ; otherwise warm it in the background and return
+    the info alone (keeps the home instant)."""
+    if not history:
+        return body
+    cover = (history[0] or {}).get("logo_url") or ""
+    if not cover:
+        return body
+    try:
+        from . import terminal_image
+        from rich.table import Table
+        if not terminal_image.chafa_available():
+            return body
+        cols, rows = 16, 9
+        poster = terminal_image.get_cached_text(cover, cols, rows)
+        if poster is None:
+            # Not ready yet : warm it (download + render) for the next visit.
+            import threading
+            threading.Thread(
+                target=terminal_image.render_to_text, args=(cover, cols, rows),
+                daemon=True,
+            ).start()
+            return body
+        poster.no_wrap = True
+        poster.overflow = "crop"
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(no_wrap=True)
+        grid.add_column(ratio=1)
+        grid.add_row(poster, body)
+        return grid
+    except Exception:
+        return body
 
 
 def _theme_preview_panel(theme: dict, title: str):
@@ -854,6 +946,8 @@ def main():
         _VERSION = _im.version("freeflix-cli")
     except Exception:
         _VERSION = "dev"
+
+    _splash(_VERSION)   # themed wordmark, once at launch
 
     while True:
         clear_screen()

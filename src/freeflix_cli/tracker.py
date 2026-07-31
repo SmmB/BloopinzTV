@@ -451,6 +451,23 @@ class ProgressTracker:
             self.data["episode_positions"].pop(key, None)
             self._save_data()
 
+    def get_episode_duration(self, key: str) -> Optional[float]:
+        """Total runtime (seconds) last seen for an episode, if known — used to
+        draw a real progress bar on the home screen."""
+        val = self.data.get("episode_durations", {}).get(key)
+        try:
+            return float(val) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def set_episode_duration(self, key: str, seconds: float):
+        if not seconds or seconds <= 0:
+            return
+        if "episode_durations" not in self.data:
+            self.data["episode_durations"] = {}
+        self.data["episode_durations"][key] = float(seconds)
+        self._save_data()
+
     # --- Search history (most-recent-first, deduped, capped) ---
     def add_search_query(self, query: str, cap: int = 12):
         q = (query or "").strip()

@@ -950,6 +950,15 @@ def episode_badges(series_title, season_title, episode_title) -> str:
     return ("  " + " ".join(tags)) if tags else ""
 
 
+def episode_progress(series_title, season_title, episode_title):
+    """Return (position_seconds, duration_seconds) for an episode's resume, or
+    (None, None). Used to draw the home-screen progress bars."""
+    import hashlib
+    wt = _episode_window_title(series_title, season_title, episode_title)
+    key = hashlib.md5(wt.encode("utf-8")).hexdigest()
+    return tracker.get_episode_position(key), tracker.get_episode_duration(key)
+
+
 def _mpv_position_args(title: str):
     """
     Return extra CLI args for mpv to enable position tracking via the
@@ -1016,6 +1025,8 @@ def _save_mpv_position(out_path: str, key: str, completion_threshold: float = 0.
     if pos is None:
         return
 
+    if dur and dur > 0:
+        tracker.set_episode_duration(key, dur)   # for the home progress bar
     if dur and dur > 0 and (pos / dur) >= completion_threshold:
         tracker.clear_episode_position(key)
     elif pos > 30:
@@ -1044,6 +1055,8 @@ def _mpv_ipc_args(key: str):
         if pos is None:
             return
         try:
+            if dur and dur > 0:
+                tracker.set_episode_duration(key, dur)   # for the home progress bar
             if dur and dur > 0 and (pos / dur) >= 0.95:
                 tracker.clear_episode_position(key)
             elif pos > 30:
