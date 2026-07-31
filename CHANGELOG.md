@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.10
+
+### ⚙️ Réglages
+- **Retirer le compte AniList** : le réglage du jeton AniList propose maintenant
+  **Modifier** ou **Retirer**. Retirer le jeton **masque aussi le « Reprendre
+  depuis AniList »** sur l'écran d'accueil.
+- **Icônes uniquement sur les grands titres** de la page Réglages
+  (Lecture / Téléchargements / Apparence / Comptes / À propos) — les
+  sous-réglages n'ont plus d'icône, la liste est plus propre.
+
 ## 1.9.9
 
 ### ▶️ French-Stream : le lecteur « premium » (fsvid/vidzy) marche enfin
