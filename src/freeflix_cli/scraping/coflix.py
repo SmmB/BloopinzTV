@@ -58,13 +58,18 @@ def get_website_url(portal=portals["coflix"]):
     if website_origin:
         return
 
-    if portal.startswith("http"):
-        response = scraper.head(portal, timeout=20)
-    else:
-        response = scraper.head("https://" + portal, timeout=20)
+    base = portal if portal.startswith("http") else "https://" + portal
+
+    # Route through cf_get : retries transient DNS / "connection reset" errors,
+    # then falls back to a plain request and DoH (bypasses ISP DNS blocking of
+    # the coflix mirror) — and follows the redirect to the live domain, so
+    # website_origin settles on the current mirror (coflix.cymru → coflix.esq…).
+    response = cloudflare.cf_get(scraper, base, timeout=20)
+    if response is None:
+        raise RuntimeError("Coflix unreachable (network/DNS/TLS).")
     response.raise_for_status()
 
-    website_origin = response.url
+    website_origin = str(response.url).rstrip("/")
 
 
 def _clean_image(raw: str) -> str:
@@ -88,20 +93,19 @@ def _clean_image(raw: str) -> str:
 
 def search(query: str) -> list[SearchResult]:
     """
-    Search Coflix via its suggest endpoint. Robust by design : the query is
-    URL-encoded (titles with spaces/accents now work), a non-JSON / blocked /
-    error response yields an empty list instead of crashing, and malformed
-    entries are skipped.
+    Search Coflix. The site moved to WordPress (the old /suggest.php now 500s),
+    so we use the standard WP REST search endpoint, which returns id/url/title/
+    subtype (movies|series) for any post type. Robust : any HTTP/JSON error or
+    a block yields an empty list instead of crashing.
     """
-    page = website_origin.rstrip("/") + "/suggest.php?query=" + urllib.parse.quote(query)
+    page = (website_origin.rstrip("/")
+            + "/wp-json/wp/v2/search?per_page=20&search=" + urllib.parse.quote(query))
 
     try:
         response = _get(page)
     except Exception:
         return []  # network error → no results
 
-    # 429 = the site is rate-limiting / blocking the search endpoint. Raise so
-    # the handler can tell the user it's a temporary block (not "no results").
     if getattr(response, "status_code", None) == 429:
         raise RuntimeError("Coflix 429 — search temporarily blocked by the site")
 
@@ -109,7 +113,7 @@ def search(query: str) -> list[SearchResult]:
         response.raise_for_status()
         data = response.json()
     except Exception:
-        return []  # other HTTP error / Cloudflare / non-JSON → no results
+        return []
 
     if not isinstance(data, list):
         return []
@@ -118,13 +122,12 @@ def search(query: str) -> list[SearchResult]:
     for result in data:
         if not isinstance(result, dict):
             continue
-        title = result.get("title") or result.get("name")
+        title = result.get("title")
         url = result.get("url")
         if not title or not url:
             continue
-        results.append(
-            SearchResult(title, url, _clean_image(result.get("image", "")), [])
-        )
+        # WP search doesn't carry a poster ; it's fetched on the detail page.
+        results.append(SearchResult(title, url, "", []))
     return results
 
 
@@ -189,52 +192,73 @@ def get_players(players_url: str) -> list[Player]:
 
 def get_episode(url: str) -> Episode:
     """
-    Get episode details including players.
-
-    Args:
-        url: Episode URL
-
-    Returns:
-        Episode object with title and players
+    Get episode details including players. On the WordPress theme the episode
+    page embeds the player aggregator in an <iframe> (same as movies), so the
+    players come straight from get_players() ; the title falls back to the h1.
     """
     response = _get(url)
     response.raise_for_status()
 
-    content = response.text
-    soup = BeautifulSoup(content, "html5lib")
+    soup = BeautifulSoup(response.text, "html5lib")
 
-    title: str = ""
-    episodes_div = soup.find("div", {"class": "episodes"})
-    if episodes_div:
-        for episode in episodes_div.find_all("div", class_="episode"):
-            link = episode.find("a")
-            if link and link.attrs.get("href") == url:
-                span = episode.find("span", class_="fwb link-co")
-                title = span.text.strip() if span else ""
-                break
+    h1 = soup.find("h1")
+    title: str = h1.get_text(strip=True) if h1 else ""
 
     iframe = soup.find("iframe")
     players_url = iframe.attrs["src"] if iframe else ""
 
-    players = get_players(players_url)
+    players = get_players(players_url) if players_url else []
 
     return Episode(title, players)
 
 
 def get_season(url: str) -> CoflixSeason:
-    response = _get(url)
+    """
+    Episodes for one season. The WordPress theme ships EVERY season's episodes
+    in the series page, split into ``<div class="cf-episodes-panel" data-panel=K>``
+    blocks. We encode the panel index in the URL fragment (``…#panel=K``, set by
+    get_series) and pull that panel's episode items (each an ``/episode/…`` link).
+    """
+    page_url, _, frag = url.partition("#")
+    panel = ""
+    if frag.startswith("panel="):
+        panel = frag[len("panel="):]
+
+    response = _get(page_url)
     response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html5lib")
 
-    content = response.json()
+    panels = soup.select(f".cf-episodes-panel[data-panel='{panel}']") if panel != "" \
+        else soup.select(".cf-episodes-panel")
 
-    title = content["title"]
+    # Real season label from the matching tab (data-panel index ≠ season number).
+    season_title = f"Saison {panel}" if panel != "" else "Episodes"
+    btn = soup.select_one(f"button[data-season='{panel}']") if panel != "" else None
+    if btn:
+        lang = btn.find("span", {"class": "cf-server-tab-lang"})
+        if lang:
+            lang.extract()
+        season_title = btn.get_text(strip=True) or season_title
+
     episodes: list[EpisodeAccess] = []
+    seen = set()
+    for panel_el in panels:
+        for item in panel_el.select(".cf-episode-item"):
+            ep_url = _onclick_url(item.get("onclick", ""))
+            if not ep_url or ep_url in seen:
+                continue
+            seen.add(ep_url)
+            title_el = item.select_one(".cf-episode-title")
+            name = title_el.get_text(strip=True) if title_el else f"Episode {len(episodes) + 1}"
+            episodes.append(EpisodeAccess(name, url=ep_url))
 
-    for episode in content["episodes"]:
-        name = f"Episode {episode['number']}"
-        episodes.append(EpisodeAccess(name, url=episode["links"]))
+    return CoflixSeason(season_title, url, episodes)
 
-    return CoflixSeason(title, url, episodes)
+
+def _onclick_url(onclick: str) -> str:
+    """Extract the target URL from a `window.location.href='…'` onclick."""
+    m = re.search(r"href=['\"]([^'\"]+)['\"]", onclick or "")
+    return m.group(1) if m else ""
 
 
 def _extract_cover(soup, html: str = "") -> str:
@@ -313,25 +337,27 @@ def get_series(url: str) -> CoflixSeries:
         for genre_link in genres_container.find_all("a"):
             genres.append(genre_link.text)
 
-    # Seasons are radio inputs : <input name="seasons" data-season="1"
-    # post-id="12468" ...>. (The old code read <ul class="sub-menu">,
-    # which is the site nav — the theme moved seasons into a
-    # section.sc-seasons block.) The episode API endpoint is unchanged :
-    #   /wp-json/apiflix/v1/series/{post-id}/{data-season}
+    # WordPress theme : seasons are tabs <button data-season="K">Saison N
+    # <span class="cf-server-tab-lang">…</span></button>, and each season's
+    # episodes live in <div class="cf-episodes-panel" data-panel="K">. Every
+    # episode is already in the page, so get_season() just re-reads the panel;
+    # we encode the panel index in the SeasonAccess URL fragment.
+    base_url = url.split("#")[0].rstrip("/")
     seasons: list[SeasonAccess] = []
-    for inp in soup.find_all("input", attrs={"name": "seasons"}):
-        post_id = inp.attrs.get("post-id")
-        data_season = inp.attrs.get("data-season")
-        if not post_id or not data_season:
+    for btn in soup.select("button[data-season]"):
+        k = btn.get("data-season")
+        if k is None:
             continue
-        link = f"{website_origin}/wp-json/apiflix/v1/series/{post_id}/{data_season}"
-        # Label : the <span> next to the radio (e.g. "From - Season 1"),
-        # falling back to "Season N".
-        parent = inp.find_parent()
-        label = parent.get_text(strip=True) if parent else ""
-        if not label:
-            label = f"Season {data_season}"
-        seasons.append(SeasonAccess(label, link))
+        # Clean label : button text minus the "N ép" count span.
+        lang = btn.find("span", {"class": "cf-server-tab-lang"})
+        if lang:
+            lang.extract()
+        label = btn.get_text(strip=True) or f"Saison {k}"
+        seasons.append(SeasonAccess(label, f"{base_url}#panel={k}"))
+
+    # Fallback : no tabs but episodes present (single-season) → one pseudo-season.
+    if not seasons and soup.select(".cf-episode-item"):
+        seasons.append(SeasonAccess("Episodes", f"{base_url}#panel=0"))
 
     return CoflixSeries(title, url, img, genres, seasons)
 
