@@ -30,7 +30,7 @@ DEFAULT_PLAYERS = {
     # },
     "ups2up": {"type": "default"},
     "ico3c": {"type": "default"},
-    "fsvid": {"type": "default", "m3u8-extractor": {"no-header": True}},
+    "fsvid": {"type": "fsvid", "referrer": "https://fsvid.lol"},
     "darkibox": {"type": "default"},
     "minochinos": {"type": "default"},
     "movearnpre": {
@@ -56,7 +56,7 @@ DEFAULT_PLAYERS = {
     "mivalyo": {"type": "default"},
     "dingtezuni": {"type": "default"},
     "bingezove": {"type": "default"},
-    "vidzy": {"type": "default"},
+    "vidzy": {"type": "fsvid", "referrer": "https://vidzy.org"},
     # luluvid (french-manga). Rotating domain ; packed-JS like the
     # default extractor. May be unreachable when its domain rotates —
     # users fall back to vidzy in that case.

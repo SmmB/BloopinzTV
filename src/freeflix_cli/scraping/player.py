@@ -594,6 +594,63 @@ def get_hls_link_xtremestream(url, headers):
     return f"https://{url_root}/player/xs1.php?data={data_id}"
 
 
+def get_hls_link_fsvid(url: str, headers: dict) -> str | None:
+    """
+    fsvid.lol / vidzy.org (french-stream's "premium" host).
+
+    The embed page ships a DECOY ``…/troll/master.m3u8`` in plain sight, but the
+    REAL stream is built at runtime by the video.js `sources` IIFE :
+        src = (function(s){ var k=[…]; b=atob(s); r="";
+                            for(i…) r+=chr(b[i]^k[i%8]); return r })("<base64>")
+    i.e. base64-decode the payload, then XOR each byte with an 8-byte key. We
+    reproduce that here to get the actual multi-quality/-language master.m3u8.
+    """
+    h = dict(headers or {})
+    # The embed 403s without a Referer ; the embed's own origin is accepted
+    # (source-agnostic — works whether it's reached via french-stream or not).
+    try:
+        origin = "https://" + url.split("/")[2] + "/"
+    except Exception:
+        origin = "https://fsvid.lol/"
+    h.setdefault("Referer", origin)
+    resp = _get(url, headers=h, impersonate="chrome")
+    resp.raise_for_status()
+
+    try:
+        code = deobfuscate(resp.text)
+    except Exception:
+        code = resp.text or ""
+
+    return _fsvid_decode(code)
+
+
+def _fsvid_decode(code: str):
+    """Pure decoder (no network) : pull the XOR key + base64 payload out of the
+    fsvid/vidzy player JS and reconstruct the real master.m3u8 URL. Testable."""
+    km = re.search(r"var\s+k\s*=\s*\[([0-9,\s]+)\]", code or "")
+    if not km:
+        return None
+    key = [int(x) for x in km.group(1).split(",") if x.strip() != ""]
+    if not key:
+        return None
+
+    # The base64 payload is the argument of the IIFE that uses that key.
+    payload = None
+    for m in re.finditer(r'\}\)\(\s*"([A-Za-z0-9+/=]+)"\s*\)', code[km.start():]):
+        payload = m.group(1)
+        break
+    if not payload:
+        return None
+
+    try:
+        raw = base64.b64decode(payload)
+        out = "".join(chr(raw[i] ^ key[i % len(key)]) for i in range(len(raw)))
+    except Exception:
+        return None
+
+    return out if out.startswith("http") and ".m3u8" in out else None
+
+
 # Anti-scraper DECOY streams : some hosts return a placeholder ("troll") video
 # to non-browser clients instead of the real content. These substrings in a
 # RESOLVED stream URL mark it as fake so we skip that player.
@@ -651,6 +708,8 @@ def get_hls_link(url: str, headers: dict = None) -> str | None:
                 link = get_hls_link_veev(url)
             elif parse_type == "xtremestream":
                 link = get_hls_link_xtremestream(url, headers)
+            elif parse_type == "fsvid":
+                link = get_hls_link_fsvid(url, headers)
 
             # Some hosts (e.g. french-stream's fsvid.lol) serve an anti-scraper
             # DECOY stream — a "troll" placeholder video — to non-browser
