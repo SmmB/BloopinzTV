@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.9
+
+### ▶️ French-Stream : le lecteur « premium » (fsvid/vidzy) marche enfin
+- Le site sert un flux **leurre** aux scrapers mais calcule le **vrai** flux à
+  l'exécution du JS (payload base64 + XOR avec une clé). FreeFlix **reproduit ce
+  déchiffrement** → il récupère maintenant **le vrai master.m3u8** multi-qualité
+  / multi-langue (le même que le site), pour **fsvid.lol ET vidzy.org**.
+- L'**analyse de résolution** fonctionne sur ces flux (variantes lues, non
+  bloquées). Le filtre anti-leurre de 1.9.8 reste en secours si le déchiffrement
+  échoue un jour.
+
 ## 1.9.8
 
 ### 🎭 French-Stream : fini la fausse vidéo « troll »
