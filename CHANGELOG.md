@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.10.0
+
+Grosse passe technique — plus rapide, plus robuste, plus léger, et testé.
+
+### ⚡ Performance
+- **Démarrage ~4× plus rapide** (~790 → ~180 ms) : la pile Crypto (AES) n'est
+  plus importée au lancement mais seulement à la résolution.
+- **Parsing HTML ~3× plus rapide** via **lxml** quand il est présent (`pip
+  install freeflix-cli[speed]`), avec repli automatique sur html5lib — donc
+  aucun risque pour l'install Termux/Android.
+
+### 🛡️ Robustesse
+- **Plus aucune requête ne peut se bloquer** : timeout de connexion (15 s) sur
+  toutes les sessions réseau — un hôte mort ne fige plus jamais l'appli.
+- **Filet de sécurité en CI** : `freeflix --doctor --sources` teste chaque
+  source en direct (up / down / Cloudflare / cassée), et des tests de parsing
+  figés (Coflix) attrapent une future migration de site **avant** le release.
+
+### 🧱 Dette / léger
+- **Flask retiré** : le proxy tourne désormais sur `http.server` de la stdlib
+  (**−2 dépendances** : flask + werkzeug). Tout le comportement est préservé
+  (réécriture m3u8, streaming résilient, Range, garde SSRF, lecteur web) et
+  **vérifié par un test d'intégration de bout en bout**.
+- **Binaire autonome** (PyInstaller) : un exécutable **sans Python** est
+  construit pour Linux / Windows / macOS à chaque release et attaché à la page
+  de release. `python -m freeflix_cli` fonctionne aussi.
+
+### 🩺 Diagnostic
+- **Journal `freeflix.log`** (rotatif) + **`freeflix --verbose`** : les erreurs
+  (source, proxy, exceptions) sont tracées → fini de deviner quand ça coince.
+
 ## 1.9.13
 
 ### 📡 Streaming increvable (connexion instable + URL expirée)
