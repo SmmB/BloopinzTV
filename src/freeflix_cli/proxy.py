@@ -687,12 +687,32 @@ _start_lock = threading.Lock()
 _ready_event = threading.Event()
 
 
+class _ProxyServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # mpv opens MANY connections for segments and drops them abruptly (end
+        # of segment, seek, quality switch) → a flood of ConnectionResetError /
+        # BrokenPipe tracebacks with the stdlib server. Those are NORMAL, not
+        # errors : swallow them (Flask/werkzeug hid them too). Anything else is
+        # logged, not printed.
+        import sys
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError,
+                            ConnectionAbortedError, TimeoutError)):
+            return
+        try:
+            from . import logsetup
+            logsetup.warning(f"proxy server error from {client_address}: {exc}")
+        except Exception:
+            pass
+
+
 def _run_server(port):
     global _server_instance
     # ThreadingHTTPServer binds immediately, so once it's constructed the port
     # is accepting — signal readiness before serve_forever (no race).
-    _server_instance = ThreadingHTTPServer((PROXY_HOST, port), _ProxyHandler)
-    _server_instance.daemon_threads = True
+    _server_instance = _ProxyServer((PROXY_HOST, port), _ProxyHandler)
     _ready_event.set()
     _server_instance.serve_forever()
 
