@@ -313,40 +313,6 @@ def _show_stats():
     pause()
 
 
-_SPLASH_ART = r"""
- ███████╗██████╗ ███████╗███████╗███████╗██╗     ██╗██╗  ██╗
- ██╔════╝██╔══██╗██╔════╝██╔════╝██╔════╝██║     ██║╚██╗██╔╝
- █████╗  ██████╔╝█████╗  █████╗  █████╗  ██║     ██║ ╚███╔╝
- ██╔══╝  ██╔══██╗██╔══╝  ██╔══╝  ██╔══╝  ██║     ██║ ██╔██╗
- ██║     ██║  ██║███████╗███████╗██║     ███████╗██║██╔╝ ██╗
- ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝╚═╝  ╚═╝
-"""
-
-
-def _splash(version: str) -> None:
-    """Themed ASCII wordmark shown once at launch. Skipped on a non-terminal
-    or a very small window (falls back to nothing so scripts stay clean)."""
-    try:
-        if not console.is_terminal:
-            return
-        import time as _time
-        from rich.text import Text
-        from rich.align import Align
-        from .themes import color
-
-        if console.size.width < 62:   # too narrow for the art → skip
-            return
-        clear_screen()
-        art = Text(_SPLASH_ART.strip("\n"), style=f"bold {color('accent')}")
-        tag = Text(f"terminal cinema · v{version}", style=color("dim"))
-        console.print()
-        console.print(Align.center(art))
-        console.print(Align.center(tag))
-        _time.sleep(0.9)   # brief beat, then straight into the menu
-    except Exception:
-        pass
-
-
 def _progress_bar_text(pct: int, width: int = 14):
     """A small themed progress bar : ▐████░░░░▌ 68%."""
     from rich.text import Text
@@ -418,45 +384,8 @@ def _home_dashboard():
         body.append(f"\n\n  {t('Nothing watched yet — pick a source below to start!')}",
                     style=color("dim"))
 
-    inner = _home_with_poster(history, body)
-
-    return Panel(inner, border_style=color("accent"), expand=True, box=box.ROUNDED,
+    return Panel(body, border_style=color("accent"), expand=True, box=box.ROUNDED,
                  padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left")
-
-
-def _home_with_poster(history, body):
-    """Compose the last-watched poster (left) + info (right) when the poster is
-    already rendered in cache ; otherwise warm it in the background and return
-    the info alone (keeps the home instant)."""
-    if not history:
-        return body
-    cover = (history[0] or {}).get("logo_url") or ""
-    if not cover:
-        return body
-    try:
-        from . import terminal_image
-        from rich.table import Table
-        if not terminal_image.chafa_available():
-            return body
-        cols, rows = 16, 9
-        poster = terminal_image.get_cached_text(cover, cols, rows)
-        if poster is None:
-            # Not ready yet : warm it (download + render) for the next visit.
-            import threading
-            threading.Thread(
-                target=terminal_image.render_to_text, args=(cover, cols, rows),
-                daemon=True,
-            ).start()
-            return body
-        poster.no_wrap = True
-        poster.overflow = "crop"
-        grid = Table.grid(padding=(0, 2))
-        grid.add_column(no_wrap=True)
-        grid.add_column(ratio=1)
-        grid.add_row(poster, body)
-        return grid
-    except Exception:
-        return body
 
 
 def _theme_preview_panel(theme: dict, title: str):
@@ -854,9 +783,11 @@ def main():
         return 0
 
     # Kill terminal focus/mouse/paste reports so their escape sequences can't
-    # be misread as a stray Esc (looked like FreeFlix closing by itself).
-    from .cli_utils import disable_terminal_reports
+    # be misread as a stray Esc (looked like FreeFlix closing by itself), and
+    # drain whatever the terminal already emitted at startup.
+    from .cli_utils import disable_terminal_reports, drain_stdin
     disable_terminal_reports()
+    drain_stdin()
 
     # Background "new releases" feed (personalised to your history) — never
     # blocks the home; results appear once ready.
@@ -947,8 +878,6 @@ def main():
     except Exception:
         _VERSION = "dev"
 
-    _splash(_VERSION)   # themed wordmark, once at launch
-
     while True:
         clear_screen()
 
@@ -1035,6 +964,8 @@ def main():
             t("What would you like to do?"),
             header=f"{icon('home')} {t('FreeFlix CLI - Home')}  •  v{_VERSION}",
             top=_home_dashboard(),
+            flush_input=True,        # drop the startup terminal-query burst first
+            esc_selects_last=False,  # a phantom Esc must NOT quit the app on entry
         )
 
         if last_watch and choice_idx == resume_idx:

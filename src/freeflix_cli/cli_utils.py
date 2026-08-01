@@ -218,6 +218,34 @@ def confirm_or_timeout(message: str, seconds: int = 6, default: bool = True) -> 
     return default if decided is None else decided
 
 
+def drain_stdin():
+    """
+    Discard anything already sitting in stdin. At launch a terminal often emits
+    replies to init queries (device attributes, cursor position) or a focus
+    event — those bytes start with ``\\x1b`` and, if read by the first menu, are
+    mis-parsed as a lone Esc → the home menu maps Esc to its last option (Exit)
+    → FreeFlix "closes by itself the moment you enter". Draining first fixes it.
+    Best-effort ; never raises.
+    """
+    try:
+        import sys
+        if not sys.stdin.isatty():
+            return
+        if os.name == "nt":
+            import msvcrt
+            while msvcrt.kbhit():
+                msvcrt.getwch()
+        else:
+            # tcflush discards the terminal driver's pending INPUT queue
+            # regardless of canonical/raw mode — the escape bytes emitted at
+            # startup have no newline, so they're NOT readable via os.read in
+            # canonical mode ; tcflush drops them anyway. This is the fix.
+            import termios
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
 def disable_terminal_reports():
     """
     Turn OFF terminal focus-reporting / mouse tracking / bracketed paste.
@@ -471,7 +499,8 @@ def _read_menu_key():
 
 def select_from_list(options: list[str], prompt: str, default_index: int = 0,
                      header: str = None, group_headers: dict = None,
-                     top=None) -> int:
+                     top=None, flush_input: bool = False,
+                     esc_selects_last: bool = True) -> int:
     """
     Display an interactive menu where users can navigate with arrow keys.
 
@@ -604,6 +633,10 @@ def select_from_list(options: list[str], prompt: str, default_index: int = 0,
         else dict(refresh_per_second=10, transient=True)
     )
     result = None  # ORIGINAL index chosen
+    if flush_input:
+        # Discard any startup terminal-query / focus bytes so the first read
+        # isn't mis-parsed as a lone Esc (→ Exit "the moment you enter").
+        drain_stdin()
     with Live(generate_renderable(), **live_kwargs) as live:
         while result is None:
             key = _read_menu_key()
@@ -659,7 +692,11 @@ def select_from_list(options: list[str], prompt: str, default_index: int = 0,
             elif key == readchar.key.ESC:
                 # Esc = go back : select the LAST option (the Back / Cancel /
                 # Exit entry every menu appends), which callers treat as "go up".
-                result = len(options) - 1
+                # At the TOP menu (home) esc_selects_last is False, so a stray /
+                # phantom Esc can't quit the app "the moment you enter" — the
+                # user leaves via the explicit Exit entry instead.
+                if esc_selects_last:
+                    result = len(options) - 1
             elif key == readchar.key.CTRL_C:
                 raise KeyboardInterrupt("Menu cancelled by user")
             live.update(generate_renderable())

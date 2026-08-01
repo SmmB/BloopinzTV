@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.12
+
+### 🐛 « FreeFlix se ferme tout seul dès l'ouverture » — corrigé
+- Au lancement, le terminal émet des séquences (réponses à ses requêtes d'init,
+  événements focus) qui restaient dans le tampon d'entrée et étaient lues par le
+  menu comme un **Échap** → l'accueil quittait aussitôt. Deux couches de
+  correctif : (1) on **vide le tampon d'entrée** (`termios.tcflush`) au démarrage
+  et avant le menu ; (2) à l'accueil, **Échap ne quitte plus** l'appli — on sort
+  par l'entrée **« Exit »** (ou Ctrl-C). Dans les sous-menus, Échap = retour,
+  comme avant.
+
+### 🎨 Ajustements accueil
+- **Splash de lancement retiré** (redondant + il déclenchait le bug ci-dessus).
+- **Poster d'accueil retiré** (rendu bloc peu net à petite taille).
+- Les **barres de progression %** de « Reprendre » s'affichent pour les épisodes
+  regardés **à partir de cette version** (la durée est maintenant mémorisée) ;
+  les anciens restent en `▸ Xm` jusqu'à leur prochaine lecture.
+
 ## 1.9.11
 
 ### 🎨 Esthétique
