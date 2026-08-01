@@ -1,3 +1,12 @@
+"""
+Local HLS/MP4 proxy — now on the Python stdlib ``http.server`` (no Flask).
+
+It resolves relative m3u8 segment URLs, injects the per-host headers the CDN
+needs, streams segments with automatic resume on a flaky link + re-resolution
+on an expired token (see ``resilient_body``), and serves a small web player.
+Binds to 127.0.0.1 on a random port, started lazily on first playback.
+"""
+
 import threading
 import socket
 import json
@@ -5,7 +14,8 @@ import time
 import ipaddress
 import urllib.parse
 import re
-from flask import Flask, request, Response, stream_with_context
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 from curl_cffi import requests, CurlOpt
 from .net_config import DNS_OPTIONS
 import m3u8
@@ -14,15 +24,13 @@ import m3u8
 PROXY_PORT = 0
 PROXY_HOST = "127.0.0.1"
 PROXY_URL = None
-_server_instance = None  # To store the server for shutdown
+_server_instance = None  # the ThreadingHTTPServer, for shutdown
 
 # Web Player State
 player_finished_event = threading.Event()
 player_heartbeat_time = 0
 
 # ── Data-usage meter ──────────────────────────────────────────────────
-# Counts the bytes streamed to the player (HLS segments + MP4) so FreeFlix
-# can show live data usage during playback and a total at the end.
 _bytes_lock = threading.Lock()
 _bytes_served = 0
 
@@ -46,17 +54,12 @@ def get_bytes_served() -> int:
         return _bytes_served
 
 
-app = Flask(__name__)
-
 # ── SSRF guard ────────────────────────────────────────────────────────
-# The proxy binds to 127.0.0.1 on a random port, but any local process (or a
-# webpage the user's browser opens to localhost) could otherwise abuse it as an
-# open proxy to reach internal/cloud-metadata services
+# The proxy binds to 127.0.0.1 on a random port, but any local process could
+# otherwise abuse it as an open proxy to reach internal/cloud-metadata services
 # (e.g. /video?url=http://169.254.169.254/…). Legit streams are always public
 # CDNs, so we refuse any target URL whose host is a loopback / private /
-# link-local / reserved IP (or a localhost literal). Only the routes that fetch
-# an EXTERNAL url are guarded; /player's url is our own loopback stream by design.
-_FETCH_ENDPOINTS = {"proxy_stream", "proxy_ts", "proxy_video"}
+# link-local / reserved IP (or a localhost literal).
 _BLOCK_HOST_LITERALS = {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
 
 
@@ -84,19 +87,6 @@ def _is_ssrf_blocked(target_url: str) -> bool:
     )
 
 
-@app.before_request
-def _ssrf_guard():
-    if request.endpoint in _FETCH_ENDPOINTS:
-        target = request.args.get("url")
-        if target and _is_ssrf_blocked(target):
-            return Response("Blocked target host", status=403)
-
-
-# Requested Google DNS Options — system DNS by default (no DoH so it works
-# even when 1.1.1.1 is unreachable). The internal video proxy adds DoH only for
-# segment fetching (see _build_session).
-
-
 def find_free_port():
     """Find a free port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -111,19 +101,9 @@ def get_base_url(url):
 
 
 # ─── Thread-local session reuse (BIG throughput win) ──────────────
-# Previously a brand-new curl_cffi Session was created for EVERY
-# segment fetch. Each new session re-did the DoH DNS resolution (an
-# HTTPS round-trip to 1.1.1.1) AND a fresh TLS handshake to the CDN —
-# ~200-600 ms of pure overhead per segment. On a 24-min HLS stream
-# (~240 segments) that overhead dominates and caps effective
-# throughput far below the real bandwidth, so the buffer can never
-# get ahead of playback.
-#
-# Now each werkzeug worker thread keeps ONE persistent session. curl
-# reuses the connection (HTTP keep-alive) and caches the DoH result,
-# so the DNS + TLS cost is paid once per thread, then amortized over
-# every segment. DoH is kept (it bypasses ISP DNS blocking of the
-# streaming domains) — we just stop paying for it 240 times.
+# Each worker thread keeps ONE persistent curl_cffi session : curl reuses the
+# connection (HTTP keep-alive) and caches the DoH result, so DNS + TLS is paid
+# once per thread then amortized over every segment.
 _thread_local = threading.local()
 
 
@@ -139,6 +119,34 @@ def _build_session():
         CurlOpt.LOW_SPEED_LIMIT: 100,
         CurlOpt.LOW_SPEED_TIME: 20,
     })
+    return session
+
+
+def get_session():
+    """Return this thread's persistent session, creating it on first use."""
+    sess = getattr(_thread_local, "session", None)
+    if sess is None:
+        sess = _build_session()
+        _thread_local.session = sess
+    return sess
+
+
+def _reset_session():
+    """Drop the thread's session so the next call builds a fresh one."""
+    sess = getattr(_thread_local, "session", None)
+    if sess is not None:
+        try:
+            sess.close()
+        except Exception:
+            pass
+    _thread_local.session = None
+
+
+def create_session(headers_dict=None):
+    """Back-compat shim : some callers still expect a fresh session."""
+    session = _build_session()
+    if headers_dict:
+        session.headers.update(headers_dict)
     return session
 
 
@@ -161,10 +169,8 @@ def _upstream_total(resp, start_offset: int):
 
 # ── Stream re-resolution (handles EXPIRED / tokenised URLs) ───────────
 # Playback registers a refresher : a callable that RE-RESOLVES the stream and
-# returns a fresh (unexpired) master URL. When the proxy hits 401/403/410 on a
-# segment or the manifest (the CDN token expired mid-playback), it fetches a
-# fresh master and re-signs the failing URL with the new token — so playback
-# keeps going instead of dying on an expired link.
+# returns a fresh (unexpired) master URL. On 401/403/410 the proxy fetches a
+# fresh master and re-signs the failing URL with the new token.
 _stream_refresher = None
 _refresh_lock = threading.Lock()
 _refresh_cache = {"master": None, "ts": 0.0}
@@ -227,7 +233,7 @@ def _refreshed_url(expired_url: str):
                 sq[p] = mq[p]
                 changed = True
         if not changed and mq:
-            sq = mq   # unnamed / whole-query token → take the master's query
+            sq = mq
         return urllib.parse.urlunparse(parts._replace(query=urllib.parse.urlencode(sq)))
     except Exception:
         return None
@@ -236,17 +242,12 @@ def _refreshed_url(expired_url: str):
 def resilient_body(url, base_headers, start_offset=0, first_resp=None,
                    first_total=None, no_progress_budget=300.0):
     """
-    A response body that survives a flaky connection AND expired URLs : it
-    streams the upstream and, whenever the transfer stalls / drops mid-way, it
-    RECONNECTS with an HTTP ``Range`` header from exactly where it left off ;
-    and on 401/403/410 (token expired) it RE-RESOLVES the stream and retries
-    with a fresh URL — so "when the connection comes back, the video keeps
-    loading" instead of mpv getting a truncated segment (the 'Error decoding
-    audio' storm).
-
-    Only gives up after *no_progress_budget* seconds with ZERO bytes received
-    (the budget resets on every byte), on 404, or if the server can't honour
-    Range after a partial send.
+    A response body that survives a flaky connection AND expired URLs : on a
+    stall/drop it RECONNECTS with an HTTP ``Range`` from where it left off ; on
+    401/403/410 (token expired) it RE-RESOLVES the stream and retries with a
+    fresh URL. Gives up only after *no_progress_budget* seconds with ZERO bytes
+    (budget resets on every byte), on 404, or if the server can't honour Range
+    after a partial send.
     """
     sent = 0
     total = first_total
@@ -255,23 +256,19 @@ def resilient_body(url, base_headers, start_offset=0, first_resp=None,
     last_progress = time.time()
 
     while True:
-        # (Re)connect if we don't have a live response.
         if resp is None:
             if time.time() - last_progress > no_progress_budget:
                 return
             h = dict(base_headers or {})
             h["Range"] = f"bytes={start_offset + sent}-"
             try:
-                resp = get_session().request(
-                    "GET", url, headers=h, stream=True, timeout=60,
-                )
+                resp = get_session().request("GET", url, headers=h, stream=True, timeout=60)
             except Exception:
                 _reset_session()
                 resp = None
                 time.sleep(1.0)
                 continue
 
-        # Validate the status (covers both the first response and reconnects).
         st = getattr(resp, "status_code", 0)
         if st in (401, 403, 410):
             fresh = _refreshed_url(url)
@@ -291,11 +288,10 @@ def resilient_body(url, base_headers, start_offset=0, first_resp=None,
             time.sleep(1.0)
             continue
         if st == 200 and sent > 0:
-            return                          # server ignored Range → can't resume cleanly
+            return  # server ignored Range → can't resume cleanly
         if total is None:
             total = _upstream_total(resp, start_offset)
 
-        # Stream the current response until it ends or breaks.
         try:
             for chunk in resp.iter_content():
                 if chunk:
@@ -303,12 +299,11 @@ def resilient_body(url, base_headers, start_offset=0, first_resp=None,
                     add_bytes(len(chunk))
                     last_progress = time.time()
                     yield chunk
-            # Upstream ended cleanly.
             if total is None or sent >= total:
-                return                      # complete
-            resp = None                     # short read → reconnect to finish
+                return
+            resp = None
         except GeneratorExit:
-            return                          # client (mpv) closed — stop
+            return
         except Exception:
             _reset_session()
             resp = None
@@ -317,73 +312,27 @@ def resilient_body(url, base_headers, start_offset=0, first_resp=None,
             time.sleep(1.0)
 
 
-def get_session():
-    """Return this thread's persistent session, creating it on first use."""
-    sess = getattr(_thread_local, "session", None)
-    if sess is None:
-        sess = _build_session()
-        _thread_local.session = sess
-    return sess
-
-
-def _reset_session():
-    """Drop the thread's session so the next call builds a fresh one
-    (used after a hard connection error to avoid reusing a dead handle)."""
-    sess = getattr(_thread_local, "session", None)
-    if sess is not None:
-        try:
-            sess.close()
-        except Exception:
-            pass
-    _thread_local.session = None
-
-
-def create_session(headers_dict=None):
-    """Back-compat shim : some callers still expect a fresh session."""
-    session = _build_session()
-    if headers_dict:
-        session.headers.update(headers_dict)
-    return session
-
-
-def fetch_with_retry(url, headers, method="GET", stream=False, max_retries=3):
-    """
-    Performs a request with an automatic retry system, reusing the
-    thread-local session for connection + DNS reuse.
-    """
+def fetch_with_retry(url, headers, method="GET", stream=False, max_retries=3,
+                     client_range=None):
+    """Request with retries, reusing the thread-local session. *client_range*
+    (the player's Range header) is forwarded when present (MP4 seeking)."""
     attempt = 0
-
     while attempt < max_retries:
         try:
             session = get_session()
-
-            # Forward the Range header if present (for MP4 seeking)
             req_headers = headers.copy() if headers else {}
-            if "Range" in request.headers:
-                req_headers["Range"] = request.headers["Range"]
-
-            # Streamed segments may legitimately take a while on a slow
-            # CDN ; manifests should resolve quickly.
+            if client_range:
+                req_headers["Range"] = client_range
             effective_timeout = 180 if stream else 15
-
             response = session.request(
-                method=method,
-                url=url,
-                headers=req_headers,
-                stream=stream,
-                timeout=effective_timeout,
+                method=method, url=url, headers=req_headers,
+                stream=stream, timeout=effective_timeout,
             )
-
-            # If 429 (rate limit) or 5xx, retry
             if response.status_code == 429 or response.status_code >= 500:
                 raise requests.RequestsError(f"Status {response.status_code}")
-
             return response
-
         except Exception as e:
             attempt += 1
-            # A transport error may have killed the kept-alive connection ;
-            # rebuild the session before retrying.
             _reset_session()
             time.sleep(0.5 * attempt)
             if attempt >= max_retries:
@@ -392,221 +341,65 @@ def fetch_with_retry(url, headers, method="GET", stream=False, max_retries=3):
                 return None
 
 
-# ---------------------------------------------------------------------------
-# Route: /stream (For .m3u8 files)
-# ---------------------------------------------------------------------------
-@app.route("/stream")
-def proxy_stream():
-    target_url = request.args.get("url")
-    headers_str = request.args.get("headers", "{}")
-
-    if not target_url:
-        return "Missing URL parameter", 400
-
-    try:
-        headers = json.loads(headers_str)
-    except Exception:
-        headers = {}
-
-    # 1. Fetch original M3U8 content
+# ── m3u8 manifest rewriting ───────────────────────────────────────────
+def _rewrite_manifest(target_url, headers):
+    """Fetch a master/media playlist and rewrite its segment / key / variant
+    URLs to go back through this proxy (so they're fetched with the right
+    headers). Returns the rewritten text, or None on a hard fetch error."""
     resp = fetch_with_retry(target_url, headers)
-    if not resp or resp.status_code not in [200, 206]:
-        return "Error fetching upstream m3u8", 502
-
+    if not resp or resp.status_code not in (200, 206):
+        return None
     content = resp.text
     base_uri = get_base_url(target_url)
 
-    # 2. Parsing with m3u8 library
     try:
         m3u8_obj = m3u8.loads(content, uri=target_url)
     except Exception:
-        # If parsing fails, return as is (fallback)
-        return Response(content, mimetype="application/vnd.apple.mpegurl")
+        return content  # unparseable → pass through as-is
 
-    # Helper function to build the proxy URL to our routes
     def make_proxy_url(endpoint, original_uri):
-        # Absolute URL resolution if relative
         absolute_url = urllib.parse.urljoin(base_uri, original_uri)
         encoded_url = urllib.parse.quote(absolute_url)
         encoded_headers = urllib.parse.quote(json.dumps(headers))
-        # Points to localhost:PORT
         return f"http://{PROXY_HOST}:{PROXY_PORT}/{endpoint}?url={encoded_url}&headers={encoded_headers}"
 
-    # 3. Rewriting segments (.ts)
-    # We directly modify the m3u8 object or perform string replace if the object is too complex.
-    # The most reliable approach is often rewriting the text, but m3u8 obj allows managing keys.
-
-    # If it's a Master Playlist (contains other playlists)
     if m3u8_obj.playlists:
         for p in m3u8_obj.playlists:
             p.uri = make_proxy_url("stream", p.uri)
-
-        # Handle Media (Alternative Audio/Subtitles)
-        for m in m3u8_obj.media:
-            if m.uri:
-                m.uri = make_proxy_url("stream", m.uri)
-
-    # If it's a Media Playlist (contains segments)
+        for mm in m3u8_obj.media:
+            if mm.uri:
+                mm.uri = make_proxy_url("stream", mm.uri)
     else:
-        # Rewrite encryption keys (AES-128 etc)
-        # CRUCIAL: keys must pass through the proxy otherwise 403/CORS
         for key in m3u8_obj.keys:
             if key and key.uri:
-                key.uri = make_proxy_url(
-                    "ts", key.uri
-                )  # Using /ts to fetch the key (it's just a binary)
-
-        # Rewrite initialization segment (for fMP4 HLS)
-        # We also use a regex fallback at the end because m3u8 library sometimes fails to dump the changes to segment_map
+                key.uri = make_proxy_url("ts", key.uri)
         if hasattr(m3u8_obj, "segment_map"):
             for seg_map in m3u8_obj.segment_map:
                 if seg_map and seg_map.uri:
                     seg_map.uri = make_proxy_url("ts", seg_map.uri)
-
-        # Rewrite segments
         for segment in m3u8_obj.segments:
             segment.uri = make_proxy_url("ts", segment.uri)
 
-    # 4. Rebuild M3U8
     new_content = m3u8_obj.dumps()
 
-    # Regex Fallback for EXT-X-MAP if m3u8 library didn't update the text
     def replace_map_uri(match):
         original_uri = match.group(1)
-        # If already proxied (by the object manipulation), skip
         if str(PROXY_PORT) in original_uri and "/ts?url=" in original_uri:
             return match.group(0)
+        return f'#EXT-X-MAP:URI="{make_proxy_url("ts", original_uri)}"'
 
-        # It's an un-proxied URI provided by dumps()
-        new_uri = make_proxy_url("ts", original_uri)
-        return f'#EXT-X-MAP:URI="{new_uri}"'
-
-    new_content = re.sub(r'#EXT-X-MAP:URI="([^"]+)"', replace_map_uri, new_content)
-
-    return Response(
-        new_content,
-        mimetype="application/vnd.apple.mpegurl",
-        headers={"Access-Control-Allow-Origin": "*"},
-    )
+    return re.sub(r'#EXT-X-MAP:URI="([^"]+)"', replace_map_uri, new_content)
 
 
-# ---------------------------------------------------------------------------
-# Catch-all for debugging 404s
-# ---------------------------------------------------------------------------
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def catch_all(path):
-    print(f"[PROXY 404 HIT] Invalid path requested: {path}")
-    return f"Not Found: {path}", 404
+def _srt_to_vtt(content: bytes, is_srt: bool) -> str:
+    if is_srt:
+        text = content.decode("utf-8", errors="ignore")
+        return "WEBVTT\n\n" + re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", text)
+    return content.decode("utf-8", errors="ignore")
 
 
-# ---------------------------------------------------------------------------
-# Route: /ts (For video segments and keys)
-# ---------------------------------------------------------------------------
-@app.route("/ts")
-def proxy_ts():
-    target_url = request.args.get("url")
-    headers_str = request.args.get("headers", "{}")
-
-    if not target_url:
-        return "Missing URL", 400
-
-    try:
-        headers = json.loads(headers_str)
-    except Exception:
-        headers = {}
-
-    # Fetch in stream mode
-    resp = fetch_with_retry(target_url, headers, stream=True)
-    if not resp:
-        return "Error fetching segment", 502
-
-    # Force Content-Type so VLC doesn't bug if the server sends .html
-    # video/mp2t is the standard for TS segments
-    response_headers = {
-        "Content-Type": "video/mp2t",
-        "Access-Control-Allow-Origin": "*",
-    }
-
-    # A segment is small + finite : the resilient body reconnects/resumes on a
-    # stall so mpv always gets the COMPLETE segment (no truncation → no audio
-    # decode errors), however flaky the link is.
-    total = _upstream_total(resp, 0)
-    return Response(
-        stream_with_context(
-            resilient_body(target_url, headers, start_offset=0,
-                           first_resp=resp, first_total=total)
-        ),
-        status=200,
-        headers=response_headers,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Route: /video (For single MP4 files with Seeking)
-# ---------------------------------------------------------------------------
-@app.route("/video")
-def proxy_video():
-    target_url = request.args.get("url")
-    headers_str = request.args.get("headers", "{}")
-
-    if not target_url:
-        return "Missing URL", 400
-
-    try:
-        headers = json.loads(headers_str)
-    except Exception:
-        headers = {}
-
-    # Fetch stream
-    resp = fetch_with_retry(target_url, headers, stream=True)
-    if not resp:
-        return "Error fetching video", 502
-
-    # Handle response headers for seeking
-    excluded_headers = [
-        "content-encoding",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-    ]
-    response_headers = [
-        (k, v) for k, v in resp.headers.items() if k.lower() not in excluded_headers
-    ]
-
-    # Forward Content-Length if available so VLC knows duration/size
-    if "Content-Length" in resp.headers:
-        response_headers.append(("Content-Length", resp.headers["Content-Length"]))
-
-    # Support for Range Request (Partial Content 206)
-    status_code = resp.status_code
-
-    # Where the client asked to start (for a seek) — the resilient body resumes
-    # from start_offset + bytes_sent whenever the link drops, so a big MP4 keeps
-    # streaming across connection hiccups instead of aborting.
-    start_offset = 0
-    cr = request.headers.get("Range")
-    if cr:
-        m = re.match(r"bytes=(\d+)-", cr)
-        if m:
-            start_offset = int(m.group(1))
-    total = _upstream_total(resp, start_offset)
-
-    return Response(
-        stream_with_context(
-            resilient_body(target_url, headers, start_offset=start_offset,
-                           first_resp=resp, first_total=total)
-        ),
-        status=status_code, headers=response_headers,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Routes: Web Player & Heartbeat
-# ---------------------------------------------------------------------------
-@app.route("/player")
-def proxy_player_ui():
-    html_content = """<!DOCTYPE html>
+# ── The web player HTML (unchanged from the Flask version) ────────────
+_PLAYER_HTML = """<!DOCTYPE html>
 <html>
 <head>
     <title>FreeFlix Web Player</title>
@@ -629,259 +422,301 @@ def proxy_player_ui():
     <div id="controls-overlay">
         <button id="closeBtn" class="action-btn">Mark as watched & Close</button>
     </div>
-
-    <video id="video" controls crossorigin="anonymous" playsinline>
-        <!-- Title and captions will be injected via JS -->
-    </video>
-
+    <video id="video" controls crossorigin="anonymous" playsinline></video>
     <div id="finishedMsg" class="message">
         Video finished! You can safely close this tab.<br>
         <button onclick="window.close()">Close Tab</button>
     </div>
-
     <script>
         document.addEventListener("DOMContentLoaded", () => {
             const video = document.getElementById('video');
             const urlParams = new URLSearchParams(window.location.search);
             const source = urlParams.get('url');
             const subPath = urlParams.get('sub_path');
-
             const isMp4 = source && source.indexOf('/video') !== -1;
             const closeBtn = document.getElementById('closeBtn');
-
-            // Setup subtitle track if provided
             if (subPath) {
                 const track = document.createElement('track');
-                track.kind = 'captions';
-                track.label = 'Subtitles';
+                track.kind = 'captions'; track.label = 'Subtitles';
                 track.src = '/player/subtitle?path=' + encodeURIComponent(subPath);
-                track.default = true;
-                video.appendChild(track);
+                track.default = true; video.appendChild(track);
             }
-
             const defaultOptions = {
                 captions: { active: true, update: true, language: 'auto' },
-                controls: [
-                    'play-large', 'play', 'progress', 'current-time', 'mute', 'volume',
-                    'captions', 'settings', 'pip', 'airplay', 'fullscreen'
-                ],
+                controls: ['play-large','play','progress','current-time','mute','volume','captions','settings','pip','airplay','fullscreen'],
                 settings: ['captions', 'quality', 'speed']
             };
-
             let player;
-
             if (source) {
                 if (isMp4 || !Hls.isSupported()) {
-                    // Native playback for MP4 or native HLS (Safari)
-                    video.src = source;
-                    player = new Plyr(video, defaultOptions);
-                    player.play();
+                    video.src = source; player = new Plyr(video, defaultOptions); player.play();
                 } else {
-                    // hls.js for M3U8 with quality selection
-                    const hls = new Hls({
-                        xhrSetup: function(xhr, url) {
-                            xhr.withCredentials = false; // Important to avoid CORS issues if not needed
-                        }
-                    });
-
-                    hls.loadSource(source);
-                    hls.attachMedia(video);
-
+                    const hls = new Hls({ xhrSetup: function(xhr, url) { xhr.withCredentials = false; } });
+                    hls.loadSource(source); hls.attachMedia(video);
                     hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
-                        // Extract available qualities
                         const availableQualities = hls.levels.map((l) => l.height);
-                        // Add Auto option
                         availableQualities.unshift(0);
-
-                        defaultOptions.quality = {
-                            default: 0, // 0 means auto
-                            options: availableQualities,
-                            forced: true,
-                            onChange: (e) => updateQuality(e),
-                        };
-                        // Custom labels for the qualities
-                        defaultOptions.i18n = {
-                            qualityLabel: {
-                                0: 'Auto',
-                            },
-                        };
-
-                        player = new Plyr(video, defaultOptions);
-
-                        // Play immediately after setup
-                        player.play();
+                        defaultOptions.quality = { default: 0, options: availableQualities, forced: true, onChange: (e) => updateQuality(e) };
+                        defaultOptions.i18n = { qualityLabel: { 0: 'Auto' } };
+                        player = new Plyr(video, defaultOptions); player.play();
                     });
-
-                    // Recover from errors
                     hls.on(Hls.Events.ERROR, function(event, data) {
                         if (data.fatal) {
                             switch (data.type) {
-                                case Hls.ErrorTypes.NETWORK_ERROR:
-                                    console.error("Fatal network error encountered, try to recover");
-                                    hls.startLoad();
-                                    break;
-                                case Hls.ErrorTypes.MEDIA_ERROR:
-                                    console.error("Fatal media error encountered, try to recover");
-                                    hls.recoverMediaError();
-                                    break;
-                                default:
-                                    hls.destroy();
-                                    break;
+                                case Hls.ErrorTypes.NETWORK_ERROR: hls.startLoad(); break;
+                                case Hls.ErrorTypes.MEDIA_ERROR: hls.recoverMediaError(); break;
+                                default: hls.destroy(); break;
                             }
                         }
                     });
-
                     function updateQuality(newQuality) {
-                        if (newQuality === 0) {
-                            window.hls.currentLevel = -1; // -1 triggers auto level
-                        } else {
-                            // Find the index of the level matching the requested height
-                            const levelIndex = hls.levels.findIndex((l) => l.height === newQuality);
-                            if (levelIndex !== -1) {
-                                hls.currentLevel = levelIndex;
-                            }
-                        }
+                        if (newQuality === 0) { window.hls.currentLevel = -1; }
+                        else { const i = hls.levels.findIndex((l) => l.height === newQuality); if (i !== -1) hls.currentLevel = i; }
                     }
-                    window.hls = hls; // Make available globally for quality update
+                    window.hls = hls;
                 }
             }
-
-            // Heartbeat logic
-            let heartbeatInterval = setInterval(() => {
-                fetch('/player/heartbeat').catch(e => console.log('Heartbeat failed'));
-            }, 2000);
-
+            let heartbeatInterval = setInterval(() => { fetch('/player/heartbeat').catch(e => {}); }, 2000);
             function endPlayback() {
                 clearInterval(heartbeatInterval);
                 fetch('/player/end').then(() => {
                     document.getElementById('finishedMsg').style.display = 'block';
                     document.getElementById('controls-overlay').style.display = 'none';
-                    if(player) {
-                        player.destroy();
-                    } else {
-                        video.style.display = 'none';
-                    }
-                    // Try to close tab automatically
+                    if (player) { player.destroy(); } else { video.style.display = 'none'; }
                     setTimeout(() => window.close(), 1000);
                 }).catch(e => {
-                    // Fallback UI
                     document.getElementById('finishedMsg').style.display = 'block';
-                    if(player) {
-                        player.destroy();
-                    } else {
-                        video.style.display = 'none';
-                    }
+                    if (player) { player.destroy(); } else { video.style.display = 'none'; }
                 });
             }
-
-            // Listen to video native 'ended' event
             video.addEventListener('ended', endPlayback);
             closeBtn.addEventListener('click', endPlayback);
         });
     </script>
 </body>
 </html>"""
-    return Response(html_content, mimetype="text/html")
 
 
-@app.route("/player/subtitle")
-def proxy_player_subtitle():
-    import os
+# ── The stdlib request handler ────────────────────────────────────────
+_FETCH_PATHS = {"/stream", "/ts", "/video"}
 
-    sub_path = request.args.get("path")
-    if not sub_path or not os.path.exists(sub_path):
-        return "Subtitle not found", 404
 
-    try:
-        with open(sub_path, "rb") as f:
-            content = f.read()
+class _ProxyHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
 
-        # Standardize SRT to WebVTT for HTML5 video <track> compatibility
-        if sub_path.lower().endswith(".srt"):
-            text = content.decode("utf-8", errors="ignore")
-            # Replace timestamps ',' with '.' for VTT format e.g: 00:00:10,500 -> 00:00:10.500
-            import re
+    def log_message(self, *args):
+        pass  # silence the default stderr access log
 
-            vtt_content = "WEBVTT\n\n" + re.sub(
-                r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", text
-            )
-            return Response(
-                vtt_content,
-                mimetype="text/vtt",
-                headers={"Access-Control-Allow-Origin": "*"},
-            )
+    # ── low-level response helpers ──
+    def _send_headers(self, status, headers):
+        self.send_response(status)
+        for k, v in headers.items():
+            self.send_header(k, v)
+        self.end_headers()
 
-        return Response(
-            content, mimetype="text/vtt", headers={"Access-Control-Allow-Origin": "*"}
+    def _send_bytes(self, status, body, content_type="text/plain; charset=utf-8",
+                    extra=None):
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        headers = {"Content-Type": content_type, "Content-Length": str(len(data))}
+        if extra:
+            headers.update(extra)
+        try:
+            self._send_headers(status, headers)
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _stream(self, status, headers, generator):
+        """Stream a generator to the client using chunked transfer encoding."""
+        h = dict(headers)
+        h["Transfer-Encoding"] = "chunked"
+        try:
+            self._send_headers(status, h)
+            for chunk in generator:
+                if not chunk:
+                    continue
+                self.wfile.write(b"%X\r\n" % len(chunk) + chunk + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client (mpv) closed — stop quietly
+        except Exception:
+            pass
+        finally:
+            try:
+                generator.close()
+            except Exception:
+                pass
+
+    def _args(self):
+        parsed = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(parsed.query)
+        return parsed.path, {k: v[0] for k, v in q.items()}
+
+    # ── routing ──
+    def do_GET(self):
+        global player_heartbeat_time
+        path, args = self._args()
+
+        # SSRF guard for the endpoints that fetch an external URL.
+        if path in _FETCH_PATHS:
+            target = args.get("url")
+            if target and _is_ssrf_blocked(target):
+                self._send_bytes(403, "Blocked target host")
+                return
+
+        try:
+            if path == "/stream":
+                self._h_stream(args)
+            elif path == "/ts":
+                self._h_ts(args)
+            elif path == "/video":
+                self._h_video(args)
+            elif path == "/player":
+                self._send_bytes(200, _PLAYER_HTML, "text/html; charset=utf-8")
+            elif path == "/player/subtitle":
+                self._h_subtitle(args)
+            elif path == "/player/heartbeat":
+                player_heartbeat_time = time.time()
+                self._send_bytes(200, "ok")
+            elif path == "/player/end":
+                player_finished_event.set()
+                self._send_bytes(200, "ok")
+            else:
+                self._send_bytes(404, f"Not Found: {path}")
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            from . import logsetup as _ls
+            _ls.warning(f"proxy handler error on {path}: {type(e).__name__}: {e}")
+            try:
+                self._send_bytes(500, "proxy error")
+            except Exception:
+                pass
+
+    # ── handlers ──
+    def _parse_headers_arg(self, args):
+        try:
+            return json.loads(args.get("headers", "{}"))
+        except Exception:
+            return {}
+
+    def _h_stream(self, args):
+        target_url = args.get("url")
+        if not target_url:
+            self._send_bytes(400, "Missing URL parameter")
+            return
+        headers = self._parse_headers_arg(args)
+        new_content = _rewrite_manifest(target_url, headers)
+        if new_content is None:
+            self._send_bytes(502, "Error fetching upstream m3u8")
+            return
+        self._send_bytes(200, new_content, "application/vnd.apple.mpegurl",
+                         {"Access-Control-Allow-Origin": "*"})
+
+    def _h_ts(self, args):
+        target_url = args.get("url")
+        if not target_url:
+            self._send_bytes(400, "Missing URL")
+            return
+        headers = self._parse_headers_arg(args)
+        resp = fetch_with_retry(target_url, headers, stream=True)
+        if not resp:
+            self._send_bytes(502, "Error fetching segment")
+            return
+        total = _upstream_total(resp, 0)
+        self._stream(
+            200,
+            {"Content-Type": "video/mp2t", "Access-Control-Allow-Origin": "*"},
+            resilient_body(target_url, headers, start_offset=0,
+                           first_resp=resp, first_total=total),
         )
-    except Exception as e:
-        return f"Error loading subtitle: {e}", 500
 
+    def _h_video(self, args):
+        target_url = args.get("url")
+        if not target_url:
+            self._send_bytes(400, "Missing URL")
+            return
+        headers = self._parse_headers_arg(args)
+        client_range = self.headers.get("Range")
+        resp = fetch_with_retry(target_url, headers, stream=True, client_range=client_range)
+        if not resp:
+            self._send_bytes(502, "Error fetching video")
+            return
 
-@app.route("/player/heartbeat")
-def proxy_player_heartbeat():
-    global player_heartbeat_time
-    # Update global timestamp of the heartbeat
-    player_heartbeat_time = time.time()
-    return "ok", 200
+        excluded = {"content-encoding", "content-length", "transfer-encoding", "connection"}
+        out_headers = {"Access-Control-Allow-Origin": "*"}
+        try:
+            for k, v in resp.headers.items():
+                if k.lower() not in excluded:
+                    out_headers[k] = v
+        except Exception:
+            pass
 
+        start_offset = 0
+        if client_range:
+            m = re.match(r"bytes=(\d+)-", client_range)
+            if m:
+                start_offset = int(m.group(1))
+        total = _upstream_total(resp, start_offset)
+        self._stream(
+            getattr(resp, "status_code", 200) or 200,
+            out_headers,
+            resilient_body(target_url, headers, start_offset=start_offset,
+                           first_resp=resp, first_total=total),
+        )
 
-@app.route("/player/end")
-def proxy_player_end():
-    global player_finished_event
-    player_finished_event.set()
-    return "ok", 200
+    def _h_subtitle(self, args):
+        import os
+        sub_path = args.get("path")
+        if not sub_path or not os.path.exists(sub_path):
+            self._send_bytes(404, "Subtitle not found")
+            return
+        try:
+            with open(sub_path, "rb") as f:
+                content = f.read()
+            vtt = _srt_to_vtt(content, sub_path.lower().endswith(".srt"))
+            self._send_bytes(200, vtt, "text/vtt", {"Access-Control-Allow-Origin": "*"})
+        except Exception as e:
+            self._send_bytes(500, f"Error loading subtitle: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Server Launch
+# Server launch
 # ---------------------------------------------------------------------------
-def run_flask(port):
+_start_lock = threading.Lock()
+_ready_event = threading.Event()
+
+
+def _run_server(port):
     global _server_instance
-    # Disable verbose flask/werkzeug logs for performance
-    import logging
-    from werkzeug.serving import make_server
-
-    log = logging.getLogger("werkzeug")
-    log.setLevel(logging.ERROR)
-
-    # make_server binds the listening socket immediately, so once it returns the
-    # port is accepting connections — signal readiness BEFORE serve_forever so
-    # ensure_started() can safely hand the URL to a player without a race.
-    _server_instance = make_server(PROXY_HOST, port, app, threaded=True)
+    # ThreadingHTTPServer binds immediately, so once it's constructed the port
+    # is accepting — signal readiness before serve_forever (no race).
+    _server_instance = ThreadingHTTPServer((PROXY_HOST, port), _ProxyHandler)
+    _server_instance.daemon_threads = True
     _ready_event.set()
     _server_instance.serve_forever()
 
 
 def start_proxy_server(port=0):
     global PROXY_PORT, PROXY_URL
-
     if port == 0:
         port = find_free_port()
-
     PROXY_PORT = port
     PROXY_URL = f"http://{PROXY_HOST}:{PROXY_PORT}"
-
-    # Launch in a Daemon thread (stops when the main program stops)
     _ready_event.clear()
-    t = threading.Thread(target=run_flask, args=(port,))
+    t = threading.Thread(target=_run_server, args=(port,))
     t.daemon = True
     t.start()
-
     return port
 
 
-_start_lock = threading.Lock()
-_ready_event = threading.Event()
+# Back-compat alias (older code / tests referenced run_flask).
+run_flask = _run_server
 
 
 def ensure_started(port=0, wait=5.0):
-    """
-    Idempotent proxy start, called lazily on first playback (so launching
-    FreeFlix doesn't import Flask / bind a port until it's actually needed).
-    Safe to call from any thread; blocks until the socket is accepting.
-    Returns the proxy port.
-    """
+    """Idempotent proxy start, called lazily on first playback. Blocks until the
+    socket is accepting. Returns the proxy port."""
     with _start_lock:
         if PROXY_URL is None or _server_instance is None:
             start_proxy_server(port)
@@ -890,32 +725,23 @@ def ensure_started(port=0, wait=5.0):
 
 
 def stop_proxy_server():
-    """Shuts down the proxy server gracefully."""
+    """Shut the proxy server down gracefully."""
     global _server_instance
     if _server_instance:
-        _server_instance.shutdown()
+        try:
+            _server_instance.shutdown()
+            _server_instance.server_close()
+        except Exception:
+            pass
         _server_instance = None
 
 
-# ---------------------------------------------------------------------------
-# Usage Example (if run directly)
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Start the proxy
     my_port = start_proxy_server(0)
-
-    # This simulates your main application
-    print("Main application running... Press Ctrl+C to quit.")
-
-    # Example URL for VLC (only works with a real source URL)
-    # url_source = "https://example.com/master.m3u8"
-    # headers_source = {"User-Agent": "Mozilla/5.0 ...", "Referer": "https://example.com"}
-    # encoded_url = urllib.parse.quote(url_source)
-    # encoded_headers = urllib.parse.quote(json.dumps(headers_source))
-    # print(f"Link for VLC: http://127.0.0.1:{my_port}/stream?url={encoded_url}&headers={encoded_headers}")
-
+    print(f"Proxy on http://{PROXY_HOST}:{my_port} — Ctrl+C to quit.")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopping.")
+        stop_proxy_server()

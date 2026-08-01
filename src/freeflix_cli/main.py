@@ -45,7 +45,7 @@ def _stop_proxy_if_running():
 
     proxy is imported lazily on first playback, so if it's not already in
     sys.modules nothing played this session and there's nothing to stop
-    (and no reason to import Flask just to exit)."""
+    (and no reason to import the proxy just to exit)."""
     mod = sys.modules.get(__package__ + ".proxy")
     if mod is not None:
         try:

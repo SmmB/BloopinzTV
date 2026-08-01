@@ -1400,7 +1400,7 @@ def play_video(
         True if playback succeeded, False otherwise
     """
 
-    # Lazy import : keeps Flask out of FreeFlix startup (the proxy is only
+    # Lazy import : keeps the proxy (+ m3u8 lib / server) out of startup (the proxy is only
     # imported / started the first time something is actually played).
     from . import proxy
 

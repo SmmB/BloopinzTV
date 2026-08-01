@@ -1,8 +1,8 @@
 """
 Lightweight networking config shared by the scrapers and the proxy.
 
-Kept SEPARATE from proxy.py (which pulls in Flask, ~100 ms) so importing a
-scraper doesn't drag Flask into startup. The proxy server is now started lazily
+Kept SEPARATE from proxy.py (which pulls in the m3u8 lib + starts a server) so importing a
+scraper doesn't drag the proxy into startup. The proxy server is now started lazily
 on first playback instead of at launch.
 """
 

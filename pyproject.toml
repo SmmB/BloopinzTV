@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "freeflix-cli"
-version = "1.9.13"
+version = "1.10.0"
 description = "Watch movies, series, and anime from your terminal — multi-language, multi-source, no browser required. A maintained fork of autoflix-cli."
 readme = "README.md"
 requires-python = ">=3.9.2"
@@ -25,7 +25,6 @@ classifiers = [
 dependencies = [
     "beautifulsoup4>=4.14.3",
     "curl-cffi>=0.13.0",
-    "flask>=3.1.2",
     "html5lib>=1.1",
     "jsbeautifier>=1.15.4",
     "m3u8>=6.0.0",
