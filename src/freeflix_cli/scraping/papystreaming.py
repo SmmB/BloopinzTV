@@ -17,10 +17,11 @@ import re
 import urllib.parse
 
 from curl_cffi import requests as cffi_requests
+from ..net_config import DNS_OPTIONS
 from bs4 import BeautifulSoup
 
 BASE = "https://papystreaming.fr"
-scraper = cffi_requests.Session(impersonate="chrome")
+scraper = cffi_requests.Session(impersonate="chrome", curl_options=DNS_OPTIONS)
 
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 _CARD = re.compile(r"/(movie|tv)/(\d+)")

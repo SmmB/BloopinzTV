@@ -8,6 +8,7 @@ from .objects import (
 from .utils import parse_html
 
 from curl_cffi import requests as cffi_requests, CurlOpt
+from ..net_config import DNS_OPTIONS
 
 from .config import portals
 
@@ -15,7 +16,7 @@ website_origin = portals["french-stream"]
 if not website_origin.startswith("http"):
     website_origin = "https://" + website_origin
 
-scraper = cffi_requests.Session(impersonate="chrome")
+scraper = cffi_requests.Session(impersonate="chrome", curl_options=DNS_OPTIONS)
 
 _DOH_SESSION = None
 
@@ -28,6 +29,7 @@ def _doh_session():
                 CurlOpt.DOH_URL: "https://1.1.1.1/dns-query",
                 CurlOpt.DOH_SSL_VERIFYPEER: 0,
                 CurlOpt.DOH_SSL_VERIFYHOST: 0,
+                CurlOpt.CONNECTTIMEOUT: 15,
             },
         )
     return _DOH_SESSION

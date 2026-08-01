@@ -10,8 +10,6 @@ import base64
 
 import json
 import binascii
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
 
 import threading as _threading
 
@@ -114,6 +112,8 @@ def get_hls_link_default(url: str, headers: dict) -> str:
 
 
 def get_hls_link_embed4me(embed_url: str) -> str:
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import unpad
     """
     Extract HLS link from embed4me player.
     Code adapted from: https://github.com/SertraFurr/Anime-Sama-Downloader/blob/main/src/utils/extract/extract_embed4me_video_source.py
@@ -246,6 +246,7 @@ def get_hls_link_sibnet(url: str) -> str:
 
 
 def get_hls_link_filemoon(url: str, headers: dict) -> str:
+    from Crypto.Cipher import AES
     """
     Extract HLS link from filemoon players.
     Follows iframe redirect and deobfuscates JavaScript.
