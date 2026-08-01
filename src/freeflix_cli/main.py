@@ -1242,6 +1242,11 @@ def main():
                     tracker.set_subtitle_search(new)
                     toast(f"{t('Subtitle download:')} {'ON' if new else 'OFF'}")
 
+                def _a_disk_cache():
+                    new = not tracker.get_disk_cache()
+                    tracker.set_disk_cache(new)
+                    toast(f"{t('Aggressive disk cache:')} {'ON' if new else 'OFF'}")
+
                 def _a_clear_cache():
                     from . import httpcache
                     n = httpcache.clear()
@@ -1261,6 +1266,7 @@ def main():
                     (PLY, f"{t('Choose default Player')} ({player_display})", _a_player),
                     (PLY, f"Nvidia GPU offload ({nv_mode})", _a_nvidia),
                     (PLY, f"{t('Analyze players (resolutions/bitrate)')} ({'ON' if tracker.get_analyze_players() else 'OFF'})", _a_analyze),
+                    (PLY, f"{t('Buffer far ahead (disk cache)')} ({'ON' if tracker.get_disk_cache() else 'OFF'})", _a_disk_cache),
                     (DL, f"{t('Download Quality')} ({quality})", _a_quality),
                     (DL, f"{t('Parallel Downloads')} ({par_n})", _a_parallel),
                     (DL, f"{t('Download subtitles')} ({'ON' if tracker.get_subtitle_search() else 'OFF'})", _a_subs),

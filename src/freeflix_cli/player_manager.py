@@ -145,6 +145,21 @@ def _mpv_resilience_args() -> list:
     generous per-read network timeout so mpv waits instead of aborting during a
     proxy stall (the proxy itself resumes via HTTP Range).
     """
+    if tracker.get_disk_cache():
+        # Aggressive DISK cache : buffer FAR ahead (up to ~30 min / 2 GiB) onto
+        # disk, not RAM — so "leave the video buffering" works and a network
+        # drop is invisible, without any risk of eating memory. mpv cleans the
+        # cache file on exit.
+        return [
+            "--cache=yes",
+            "--cache-on-disk=yes",
+            "--cache-secs=1800",              # keep up to 30 min
+            "--demuxer-readahead-secs=1800",  # read far ahead
+            "--demuxer-max-bytes=2GiB",
+            "--demuxer-max-back-bytes=300MiB",
+            "--network-timeout=120",
+        ]
+    # Modest RAM cache (kept for anyone who turns disk cache off in Settings).
     return [
         "--cache=yes",
         "--cache-secs=120",            # keep up to ~2 min buffered

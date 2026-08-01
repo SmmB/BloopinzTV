@@ -283,6 +283,15 @@ class ProgressTracker:
         self.data["subtitle_search"] = bool(on)
         self._save_data()
 
+    def get_disk_cache(self) -> bool:
+        # Aggressive DISK buffering for mpv (buffers far ahead onto disk instead
+        # of the modest 120s RAM cache). On by default.
+        return self.data.get("disk_cache", True)
+
+    def set_disk_cache(self, on: bool):
+        self.data["disk_cache"] = bool(on)
+        self._save_data()
+
     # --- Player Preferences ---
 
     def get_player(self) -> Optional[str]:

@@ -248,6 +248,8 @@ _FR = {
     "Clear HTTP cache": "Vider le cache HTTP",
     "HTTP cache cleared": "Cache HTTP vidé",
     "empty": "vide",
+    "Buffer far ahead (disk cache)": "Bufferiser loin devant (cache disque)",
+    "Aggressive disk cache:": "Cache disque agressif :",
     "yes": "oui",
     "no": "non",
     "auto in": "auto dans",
