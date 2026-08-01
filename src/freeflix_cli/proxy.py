@@ -132,13 +132,189 @@ def _build_session():
     session.curl_options.update(DNS_OPTIONS)
     # Use DoH for the video proxy (bypasses ISP DNS blocks on CDNs).
     session.curl_options[CurlOpt.DOH_URL] = "https://1.1.1.1/dns-query"
-    # Loosen libcurl's low-speed cutoff so congested CDNs aren't dropped
-    # after 15 s of slow traffic (see the 'Operation too slow' issue).
+    # Abort a transfer that's essentially dead (< 100 B/s) after 20 s, so the
+    # resilient body can RECONNECT + RESUME quickly rather than hanging a full
+    # minute. The reconnect logic (not a longer cutoff) is what makes it robust.
     session.curl_options.update({
         CurlOpt.LOW_SPEED_LIMIT: 100,
-        CurlOpt.LOW_SPEED_TIME: 60,
+        CurlOpt.LOW_SPEED_TIME: 20,
     })
     return session
+
+
+def _upstream_total(resp, start_offset: int):
+    """Total bytes we still expect to receive from *resp* (from Content-Range
+    or Content-Length), or None if unknown."""
+    try:
+        cr = resp.headers.get("Content-Range") or resp.headers.get("content-range")
+        if cr and "/" in cr:
+            grand = cr.rsplit("/", 1)[-1].strip()
+            if grand.isdigit():
+                return max(0, int(grand) - start_offset)
+        cl = resp.headers.get("Content-Length") or resp.headers.get("content-length")
+        if cl and str(cl).isdigit():
+            return int(cl)   # 206 → remaining; 200 → full body
+    except Exception:
+        pass
+    return None
+
+
+# ── Stream re-resolution (handles EXPIRED / tokenised URLs) ───────────
+# Playback registers a refresher : a callable that RE-RESOLVES the stream and
+# returns a fresh (unexpired) master URL. When the proxy hits 401/403/410 on a
+# segment or the manifest (the CDN token expired mid-playback), it fetches a
+# fresh master and re-signs the failing URL with the new token — so playback
+# keeps going instead of dying on an expired link.
+_stream_refresher = None
+_refresh_lock = threading.Lock()
+_refresh_cache = {"master": None, "ts": 0.0}
+_SIGN_PARAMS = ("t", "s", "e", "sp", "i", "f", "fr", "token", "expires",
+                "expire", "hash", "hmac", "sig", "signature", "key", "st")
+
+
+def set_stream_refresher(fn):
+    """Register a callable() -> fresh master URL (or None). Called by play_video
+    at the start of a proxied playback."""
+    global _stream_refresher
+    with _refresh_lock:
+        _stream_refresher = fn
+        _refresh_cache["master"] = None
+        _refresh_cache["ts"] = 0.0
+
+
+def clear_stream_refresher():
+    global _stream_refresher
+    with _refresh_lock:
+        _stream_refresher = None
+
+
+def _fresh_master(max_age: float = 8.0):
+    """Re-resolve the stream (cached briefly so a burst of expired segments
+    triggers ONE re-resolution, not dozens)."""
+    with _refresh_lock:
+        fn = _stream_refresher
+        if fn is None:
+            return None
+        if _refresh_cache["master"] and (time.time() - _refresh_cache["ts"]) < max_age:
+            return _refresh_cache["master"]
+    try:
+        master = fn()
+    except Exception:
+        master = None
+    with _refresh_lock:
+        if master:
+            _refresh_cache["master"] = master
+            _refresh_cache["ts"] = time.time()
+    return master
+
+
+def _refreshed_url(expired_url: str):
+    """A fresh, unexpired version of *expired_url* (the master itself, or a
+    segment re-signed with the fresh token), or None."""
+    master = _fresh_master()
+    if not master:
+        return None
+    low = expired_url.lower()
+    if ".m3u8" in low or "master" in low:
+        return master
+    try:
+        mq = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(master).query))
+        parts = urllib.parse.urlparse(expired_url)
+        sq = dict(urllib.parse.parse_qsl(parts.query))
+        changed = False
+        for p in _SIGN_PARAMS:
+            if p in mq:
+                sq[p] = mq[p]
+                changed = True
+        if not changed and mq:
+            sq = mq   # unnamed / whole-query token → take the master's query
+        return urllib.parse.urlunparse(parts._replace(query=urllib.parse.urlencode(sq)))
+    except Exception:
+        return None
+
+
+def resilient_body(url, base_headers, start_offset=0, first_resp=None,
+                   first_total=None, no_progress_budget=300.0):
+    """
+    A response body that survives a flaky connection AND expired URLs : it
+    streams the upstream and, whenever the transfer stalls / drops mid-way, it
+    RECONNECTS with an HTTP ``Range`` header from exactly where it left off ;
+    and on 401/403/410 (token expired) it RE-RESOLVES the stream and retries
+    with a fresh URL — so "when the connection comes back, the video keeps
+    loading" instead of mpv getting a truncated segment (the 'Error decoding
+    audio' storm).
+
+    Only gives up after *no_progress_budget* seconds with ZERO bytes received
+    (the budget resets on every byte), on 404, or if the server can't honour
+    Range after a partial send.
+    """
+    sent = 0
+    total = first_total
+    resp = first_resp
+    refresh_tries = 0
+    last_progress = time.time()
+
+    while True:
+        # (Re)connect if we don't have a live response.
+        if resp is None:
+            if time.time() - last_progress > no_progress_budget:
+                return
+            h = dict(base_headers or {})
+            h["Range"] = f"bytes={start_offset + sent}-"
+            try:
+                resp = get_session().request(
+                    "GET", url, headers=h, stream=True, timeout=60,
+                )
+            except Exception:
+                _reset_session()
+                resp = None
+                time.sleep(1.0)
+                continue
+
+        # Validate the status (covers both the first response and reconnects).
+        st = getattr(resp, "status_code", 0)
+        if st in (401, 403, 410):
+            fresh = _refreshed_url(url)
+            if fresh and fresh != url and refresh_tries < 4:
+                refresh_tries += 1
+                url = fresh
+                resp = None
+                time.sleep(0.5)
+                continue
+            return
+        if st == 404:
+            return
+        if st not in (200, 206):
+            resp = None
+            if time.time() - last_progress > no_progress_budget:
+                return
+            time.sleep(1.0)
+            continue
+        if st == 200 and sent > 0:
+            return                          # server ignored Range → can't resume cleanly
+        if total is None:
+            total = _upstream_total(resp, start_offset)
+
+        # Stream the current response until it ends or breaks.
+        try:
+            for chunk in resp.iter_content():
+                if chunk:
+                    sent += len(chunk)
+                    add_bytes(len(chunk))
+                    last_progress = time.time()
+                    yield chunk
+            # Upstream ended cleanly.
+            if total is None or sent >= total:
+                return                      # complete
+            resp = None                     # short read → reconnect to finish
+        except GeneratorExit:
+            return                          # client (mpv) closed — stop
+        except Exception:
+            _reset_session()
+            resp = None
+            if time.time() - last_progress > no_progress_budget:
+                return
+            time.sleep(1.0)
 
 
 def get_session():
@@ -353,24 +529,16 @@ def proxy_ts():
         "Access-Control-Allow-Origin": "*",
     }
 
-    # Use stream_with_context to return chunks as they come
-    # This is where memory efficiency happens.
-    # Swallow upstream errors instead of letting them bubble up to werkzeug
-    # which would print a full Python traceback for every failed chunk
-    # (and the client would still see an aborted response either way).
-    def generate():
-        try:
-            for chunk in resp.iter_content(chunk_size=8192):
-                if chunk:
-                    add_bytes(len(chunk))
-                    yield chunk
-        except Exception as e:
-            print(f"[proxy /ts] upstream chunk failed: {type(e).__name__}: {e}")
-            return  # graceful EOF for the client
-
+    # A segment is small + finite : the resilient body reconnects/resumes on a
+    # stall so mpv always gets the COMPLETE segment (no truncation → no audio
+    # decode errors), however flaky the link is.
+    total = _upstream_total(resp, 0)
     return Response(
-        stream_with_context(generate()),
-        status=resp.status_code,
+        stream_with_context(
+            resilient_body(target_url, headers, start_offset=0,
+                           first_resp=resp, first_total=total)
+        ),
+        status=200,
         headers=response_headers,
     )
 
@@ -414,20 +582,23 @@ def proxy_video():
     # Support for Range Request (Partial Content 206)
     status_code = resp.status_code
 
-    def generate():
-        try:
-            for chunk in resp.iter_content(
-                chunk_size=16384
-            ):  # Slightly larger chunks for MP4
-                if chunk:
-                    add_bytes(len(chunk))
-                    yield chunk
-        except Exception as e:
-            print(f"[proxy /video] upstream chunk failed: {type(e).__name__}: {e}")
-            return  # graceful EOF for the client
+    # Where the client asked to start (for a seek) — the resilient body resumes
+    # from start_offset + bytes_sent whenever the link drops, so a big MP4 keeps
+    # streaming across connection hiccups instead of aborting.
+    start_offset = 0
+    cr = request.headers.get("Range")
+    if cr:
+        m = re.match(r"bytes=(\d+)-", cr)
+        if m:
+            start_offset = int(m.group(1))
+    total = _upstream_total(resp, start_offset)
 
     return Response(
-        stream_with_context(generate()), status=status_code, headers=response_headers
+        stream_with_context(
+            resilient_body(target_url, headers, start_offset=start_offset,
+                           first_resp=resp, first_total=total)
+        ),
+        status=status_code, headers=response_headers,
     )
 
 

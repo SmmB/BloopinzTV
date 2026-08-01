@@ -138,6 +138,23 @@ def get_freeflix_mpv_config_dir() -> str:
     return os.path.expanduser("~/.config/freeflix/mpv")
 
 
+def _mpv_resilience_args() -> list:
+    """
+    mpv flags that let playback ride out a flaky connection : a big read-ahead
+    cache so mpv plays from buffer while the proxy reconnects/re-resolves, and a
+    generous per-read network timeout so mpv waits instead of aborting during a
+    proxy stall (the proxy itself resumes via HTTP Range).
+    """
+    return [
+        "--cache=yes",
+        "--cache-secs=120",            # keep up to ~2 min buffered
+        "--demuxer-max-bytes=200MiB",
+        "--demuxer-max-back-bytes=50MiB",
+        "--demuxer-readahead-secs=120",
+        "--network-timeout=120",       # tolerate long proxy stalls
+    ]
+
+
 def _mpv_config_args() -> list:
     """Return ['--config-dir=...'] if the FreeFlix mpv config dir exists."""
     cfg = get_freeflix_mpv_config_dir()
@@ -1346,6 +1363,18 @@ def is_already_downloaded(title: str, subfolder: str = None) -> bool:
     return any(base + ext in names for ext in (".mp4", ".mkv", ".webm"))
 
 
+def _refresh_stream_url(u: str, h: dict):
+    """Re-resolve a player URL to a FRESH stream URL (used by the proxy when the
+    current CDN token expires). Mirrors play_video's resolution + normalization."""
+    try:
+        s = player.get_hls_link(u, h)
+        if s and s.startswith("/"):
+            s = "https://" + u.removeprefix("https://").removeprefix("http://").split("/")[0] + s
+        return s
+    except Exception:
+        return None
+
+
 def play_video(
     url: str,
     headers: dict,
@@ -1424,6 +1453,16 @@ def play_video(
         if not output_suppressed:
             print_error(t("Could not resolve stream URL."))
         return False
+
+    # Register a refresher so the proxy can RE-RESOLVE this stream if the CDN
+    # token expires mid-playback (403/410) — playback recovers instead of dying.
+    if not is_direct:
+        try:
+            proxy.set_stream_refresher(
+                lambda u=url, h=dict(headers or {}): _refresh_stream_url(u, h)
+            )
+        except Exception:
+            pass
 
     if not output_suppressed:
         print_success(f"Stream URL: [cyan]{stream_url}[/cyan]")
@@ -1865,6 +1904,7 @@ def play_video(
                         cmd.append(f"--sub-file={local_subtitle_path}")
                 elif player_name == "mpv":
                     cmd.extend(_mpv_config_args())  # FreeFlix-only mpv config
+                    cmd.extend(_mpv_resilience_args())  # big cache to ride out stalls
                     cmd.append(f"--title={title}")
                     if selected_hls_bitrate:
                         # Cap to the chosen variant ; mpv keeps the master's
@@ -1949,6 +1989,7 @@ def play_video(
                     cmd = [
                         player_executable,
                         *_mpv_config_args(),  # FreeFlix-only mpv config
+                        *_mpv_resilience_args(),  # big cache to ride out stalls
                         f'--referrer="{referer}"',
                         f'--user-agent="{user_agent}"',
                         f'--http-header-fields="{headers_mpv}"',

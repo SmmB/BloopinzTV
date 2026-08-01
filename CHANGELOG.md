@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.13
+
+### 📡 Streaming increvable (connexion instable + URL expirée)
+- Le proxy récupère maintenant tout seul quand la connexion fait n'importe quoi.
+  Le corps de réponse (HLS `/ts` **et** MP4 `/video`) **reconnecte via HTTP
+  Range exactement où il s'était arrêté** dès que le lien stalle/coupe → mpv
+  reçoit toujours des **segments complets** (fini le spam « Error decoding
+  audio »). Il ne lâche qu'après **5 min sans le moindre octet** (le budget se
+  réarme à chaque octet) → dès que la connexion repasse, ça charge.
+- **URL / token expiré (403/410)** : le proxy **re-résout le flux** (token
+  frais) et **ré-signe** l'URL qui a échoué → la lecture repart au lieu de
+  mourir sur un lien périmé.
+- **mpv** reçoit un **gros cache** (`--cache-secs=120`, readahead 120 s,
+  network-timeout 120 s) pour jouer en avance et absorber les pauses pendant que
+  le proxy reconnecte. libcurl détecte un transfert mort en 20 s (au lieu de 60).
+- Prouvé par tests : coupure en plein transfert → fichier livré complet et
+  identique ; segment 403 → récupéré via re-résolution.
+
 ## 1.9.12
 
 ### 🐛 « FreeFlix se ferme tout seul dès l'ouverture » — corrigé
