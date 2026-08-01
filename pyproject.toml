@@ -35,6 +35,13 @@ dependencies = [
     "rich>=14.2.0",
 ]
 
+# Optional speed-ups. `pip install freeflix-cli[speed]` pulls in lxml — HTML
+# parsing then uses it (~3× faster on big pages). Without it, FreeFlix falls
+# back to html5lib automatically (see scraping.utils.parse_html), so this is a
+# pure bonus and never required (keeps the Termux/Android install simple).
+[project.optional-dependencies]
+speed = ["lxml>=5.0"]
+
 [project.urls]
 Homepage = "https://github.com/freedy237/freeflix-cli"
 Repository = "https://github.com/freedy237/freeflix-cli.git"

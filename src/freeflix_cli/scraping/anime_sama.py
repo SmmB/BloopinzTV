@@ -1,7 +1,6 @@
 from curl_cffi import requests as cffi_requests
-from bs4 import BeautifulSoup
 from .objects import SearchResult, SamaSeason, SamaSeries, SeasonAccess, Episode
-from .utils import parse_episodes_from_js
+from .utils import parse_episodes_from_js, parse_html
 from ..net_config import DNS_OPTIONS
 from . import resilient
 from random import randint
@@ -71,7 +70,7 @@ def get_website_url(portal=portals["anime-sama"]):
         raise RuntimeError("Anime-Sama unreachable (network/DNS/TLS).")
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     btn = soup.find("a", {"class": "btn-primary"})
     recommanded_url = btn.attrs["href"] if btn else base
@@ -94,7 +93,7 @@ def search(query: str) -> list[SearchResult]:
 
     results: list[SearchResult] = []
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     # Selectors are hot-patchable via the remote selectors.jsonc (see
     # scraping.resilient) — a layout change on Anime-Sama can be fixed for
@@ -171,7 +170,7 @@ def get_series(url: str) -> SamaSeries:
     response = _get(url, cache_ttl=3600)
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     # Title : newer anime-sama layout dropped <h4 id="titreOeuvre"> in favour
     # of a plain <h1>. The selector list (old id, then h1) is hot-patchable;

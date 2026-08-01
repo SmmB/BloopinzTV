@@ -387,9 +387,8 @@ def fetch_with_retry(url, headers, method="GET", stream=False, max_retries=3):
             _reset_session()
             time.sleep(0.5 * attempt)
             if attempt >= max_retries:
-                print(
-                    f"[ERROR] Failed to fetch {url} after {max_retries} attempts: {e}"
-                )
+                from . import logsetup as _ls
+                _ls.warning(f"proxy: failed to fetch {url} after {max_retries} attempts: {e}")
                 return None
 
 

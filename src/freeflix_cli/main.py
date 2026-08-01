@@ -62,6 +62,12 @@ def _source_error_panel(source_name: str, exc: Exception) -> None:
     from rich.text import Text
     from .themes import color
 
+    try:
+        from . import logsetup
+        logsetup._logger.error("Source '%s' failed", source_name, exc_info=exc)
+    except Exception:
+        pass
+
     msg = str(exc) or exc.__class__.__name__
     low = (msg + " " + exc.__class__.__name__).lower()
     network = any(k in low for k in (
@@ -754,6 +760,17 @@ def _register_providers():
 
 
 def main():
+    # ── Diagnostics : always log to a rotating file ; --verbose also to stderr.
+    _verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    try:
+        from . import logsetup
+        if _verbose:
+            os.environ["FREEFLIX_VERBOSE"] = "1"
+        logsetup.setup(verbose=_verbose)
+        logsetup.log("FreeFlix starting")
+    except Exception:
+        pass
+
     # ── CLI flags (lightweight, before anything else) ──────────
     if "--doctor" in sys.argv or "-D" in sys.argv:
         from .doctor import cli_doctor
@@ -777,9 +794,13 @@ def main():
         print("  freeflix           launch the TUI")
         print("  freeflix --setup   re-run setup : anime + interface language, then deps")
         print("  freeflix --doctor  run system diagnostic")
+        print("  freeflix --doctor --sources  live-test every source (search + resolve)")
         print("  freeflix --doctor --upload  diagnostic + upload to Gist")
+        print("  freeflix --verbose print DEBUG to the console (also always logged)")
         print("  freeflix --version print the installed version")
         print("  freeflix --help    this message")
+        from .logsetup import LOG_FILE
+        print(f"\n  log file : {LOG_FILE}")
         return 0
 
     # Kill terminal focus/mouse/paste reports so their escape sequences can't

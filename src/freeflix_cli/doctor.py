@@ -303,8 +303,61 @@ def _upload_gist(content: str) -> str | None:
     return None
 
 
+# ── Live source self-test (freeflix --doctor --sources) ───────────────
+# Each entry : (label, scraper module path, a search query). We call the
+# scraper's get_website_url() + search() exactly like the app does and report
+# reachable / results / Cloudflare / broken — so a site migration (Coflix went
+# WordPress, French-Stream's decoy) is caught in seconds instead of "it just
+# doesn't work".
+_SOURCE_TESTS = [
+    ("Anime-Sama", "freeflix_cli.scraping.anime_sama", "naruto"),
+    ("French-Manga", "freeflix_cli.scraping.french_manga", "naruto"),
+    ("Coflix", "freeflix_cli.scraping.coflix", "matrix"),
+    ("French-Stream", "freeflix_cli.scraping.french_stream", "matrix"),
+    ("Papystreaming", "freeflix_cli.scraping.papystreaming", "matrix"),
+]
+
+
+def check_sources() -> str:
+    """Live-test every source (get_website_url + search) and return a report."""
+    import importlib
+    import time as _t
+
+    lines = ["FreeFlix — source self-test", "=" * 34, ""]
+    for label, modpath, query in _SOURCE_TESTS:
+        t0 = _t.time()
+        try:
+            mod = importlib.import_module(modpath)
+        except Exception as e:
+            lines.append(f"✗ {label:<14} import error: {e}")
+            continue
+        try:
+            if hasattr(mod, "get_website_url"):
+                mod.get_website_url()
+            n = len(mod.search(query))
+            dt = int((_t.time() - t0) * 1000)
+            if n > 0:
+                lines.append(f"✓ {label:<14} OK — {n} results  ({dt} ms)")
+            else:
+                lines.append(f"⚠ {label:<14} reachable but 0 results for '{query}'  ({dt} ms)")
+        except Exception as e:
+            msg = str(e)
+            low = msg.lower()
+            tag = "Cloudflare" if ("cloudflare" in low or "cf-ray" in low) else \
+                  "unreachable" if any(k in low for k in ("resolve", "connection", "timed out", "dns")) else \
+                  "broken"
+            lines.append(f"✗ {label:<14} {tag}: {msg[:70]}")
+    lines.append("")
+    from .logsetup import LOG_FILE
+    lines.append(f"(details logged to {LOG_FILE})")
+    return "\n".join(lines)
+
+
 def cli_doctor():
     """Entry point for ``freeflix --doctor``."""
+    if "--sources" in sys.argv:
+        print(check_sources())
+        return 0
     upload = "--upload" in sys.argv
     report = run(upload=upload)
     print(report)

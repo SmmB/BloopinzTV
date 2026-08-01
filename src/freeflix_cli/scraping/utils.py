@@ -78,7 +78,7 @@ def get_value_by_key(ul_html: Union[str, BeautifulSoup], key: str) -> Optional[s
     '2025'
     """
     # Accept either HTML text or a pre‑built soup object.
-    soup = BeautifulSoup(ul_html, "html5lib") if isinstance(ul_html, str) else ul_html
+    soup = parse_html(ul_html) if isinstance(ul_html, str) else ul_html
 
     # 1) Modern approach: CSS selector with :has() and :-soup-contains().
     node = soup.select_one(f"li:has(.mov-label:-soup-contains('{key}')) .mov-desc")
@@ -92,3 +92,15 @@ def get_value_by_key(ul_html: Union[str, BeautifulSoup], key: str) -> Optional[s
                 break
 
     return node.get_text(strip=True) if node else None
+
+
+def parse_html(markup):
+    """BeautifulSoup with the FAST lxml parser when available, falling back to
+    html5lib (lenient, always installed). lxml is ~10-30x faster on big pages,
+    so sources feel snappier ; the fallback keeps parsing working everywhere
+    (e.g. a Termux env without a compiled lxml)."""
+    from bs4 import BeautifulSoup
+    try:
+        return BeautifulSoup(markup, "lxml")
+    except Exception:
+        return BeautifulSoup(markup, "html5lib")

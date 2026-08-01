@@ -1,3 +1,4 @@
+from .utils import parse_html
 """
 Minimal HTML scraper for nyaa.si.
 
@@ -7,7 +8,6 @@ for the top results of a search query.
 
 from typing import List, Dict
 from urllib.parse import quote_plus
-from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
 from .. import cloudflare
 
@@ -28,7 +28,7 @@ def search(query: str, max_results: int = 25) -> List[Dict]:
     except Exception:
         return []
 
-    soup = BeautifulSoup(r.text, "html5lib")
+    soup = parse_html(r.text)
     table = soup.find("table", class_="torrent-list")
     if not table:
         return []

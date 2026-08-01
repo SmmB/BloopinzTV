@@ -1,5 +1,4 @@
 from curl_cffi import requests as cffi_requests
-from bs4 import BeautifulSoup
 from .objects import (
     SearchResult,
     CoflixSeason,
@@ -10,6 +9,7 @@ from .objects import (
     Player,
     CoflixMovie,
 )
+from .utils import parse_html
 import base64
 import re
 import urllib.parse
@@ -109,7 +109,7 @@ def _search_html(query: str) -> list[SearchResult]:
     page = website_origin.rstrip("/") + "/?s=" + urllib.parse.quote(query)
     response = _get(page)
     response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     results: list[SearchResult] = []
     seen = set()
@@ -210,7 +210,7 @@ def get_players(players_url: str) -> list[Player]:
         )
     response.raise_for_status()
 
-    soup = BeautifulSoup(content, "html5lib")
+    soup = parse_html(content)
 
     players = []
     for li in soup.find_all("li"):
@@ -233,7 +233,7 @@ def get_episode(url: str) -> Episode:
     response = _get(url)
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     h1 = soup.find("h1")
     title: str = h1.get_text(strip=True) if h1 else ""
@@ -260,7 +260,7 @@ def get_season(url: str) -> CoflixSeason:
 
     response = _get(page_url)
     response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     panels = soup.select(f".cf-episodes-panel[data-panel='{panel}']") if panel != "" \
         else soup.select(".cf-episodes-panel")
@@ -340,7 +340,7 @@ def get_movie(url: str) -> CoflixMovie:
     response = _get(url)
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     h1 = soup.find("h1")
     title: str = h1.text.strip() if h1 else url.rstrip("/").split("/")[-1].replace("-", " ").title()
@@ -367,7 +367,7 @@ def get_series(url: str) -> CoflixSeries:
     response = _get(url)
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     h1 = soup.find("h1")
     title: str = h1.text.strip() if h1 else url.rstrip("/").split("/")[-1].replace("-", " ").title()

@@ -1,4 +1,3 @@
-from bs4 import BeautifulSoup
 from .objects import (
     SearchResult,
     FrenchStreamMovie,
@@ -6,6 +5,7 @@ from .objects import (
     FrenchStreamSeason,
     Episode,
 )
+from .utils import parse_html
 
 from curl_cffi import requests as cffi_requests, CurlOpt
 
@@ -151,7 +151,7 @@ def search(query: str) -> list[SearchResult]:
 
     results: list[SearchResult] = []
 
-    soup = BeautifulSoup(response.text, "html5lib")
+    soup = parse_html(response.text)
 
     for result in soup.find_all("div", {"class": "search-item"}):
         try:
@@ -179,7 +179,7 @@ def search(query: str) -> list[SearchResult]:
 
 
 def get_movie(url: str, content: str) -> FrenchStreamMovie:
-    soup = BeautifulSoup(content, "html5lib")
+    soup = parse_html(content)
 
     og = soup.find("meta", {"property": "og:title"})
     if og and og.attrs.get("content"):
@@ -219,7 +219,7 @@ def get_movie(url: str, content: str) -> FrenchStreamMovie:
 
 
 def get_series_season(url: str, content: str) -> FrenchStreamSeason:
-    soup = BeautifulSoup(content, "html5lib")
+    soup = parse_html(content)
 
     og = soup.find("meta", {"property": "og:title"})
     if og and og.attrs.get("content"):
