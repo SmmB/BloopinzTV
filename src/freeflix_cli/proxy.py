@@ -803,13 +803,23 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             self._send_bytes(400, "Missing URL")
             return
         headers = self._parse_headers_arg(args)
-        # Buffer the WHOLE segment and only send it if complete — a truncated
-        # segment desyncs audio/video, so complete-or-502 (the player re-asks).
-        ok, data = fetch_segment(target_url, headers)
-        if not ok:
-            self._send_bytes(502, "Segment incomplete")
+        # Stream the segment PROGRESSIVELY (bytes as they arrive) so mpv's cache
+        # fills smoothly second-by-second and playback starts fast — the same
+        # feel as autoflix. resilient_body still RESUMES on a stall (reconnect +
+        # HTTP Range) and re-resolves an expired token, so a very bad connection
+        # recovers and completes the segment instead of hanging — robustness
+        # kept, without buffering the whole segment first.
+        resp = fetch_with_retry(target_url, headers, stream=True)
+        if not resp:
+            self._send_bytes(502, "Error fetching segment")
             return
-        self._send_bytes(200, data, "video/mp2t", {"Access-Control-Allow-Origin": "*"})
+        total = _upstream_total(resp, 0)
+        self._stream(
+            getattr(resp, "status_code", 200) or 200,
+            {"Content-Type": "video/mp2t", "Access-Control-Allow-Origin": "*"},
+            resilient_body(target_url, headers, start_offset=0,
+                           first_resp=resp, first_total=total),
+        )
 
     def _h_video(self, args):
         target_url = args.get("url")

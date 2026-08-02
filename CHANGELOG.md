@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.10.6
+
+Streaming plus rapide et plus fluide (comportement autoflix retrouvé).
+
+- **Cache qui se remplit seconde par seconde** : les segments HLS sont de
+  nouveau **streamés au fil des octets** au lieu d'être bufferisés en entier
+  avant envoi — mpv reçoit un flux continu, le cache monte en douceur et la
+  lecture démarre bien plus vite (fini les paliers de ~7 s = la durée d'un
+  segment).
+- **Robustesse conservée** : le flux passe toujours par `resilient_body`, qui
+  **reprend en HTTP Range** sur une coupure et **re-résout un jeton expiré** —
+  donc une très mauvaise connexion récupère et termine le segment, sans figer.
+
 ## 1.10.5
 
 Passe design + robustesse/sécurité.
