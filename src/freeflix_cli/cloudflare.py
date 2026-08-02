@@ -171,7 +171,11 @@ def cf_get(session, url, **kw):
             break
         except Exception as e:
             last_exc = e
-            _t.sleep(0.4 * (attempt + 1))
+            # Exponential backoff (0.4s, 0.8s, 1.6s) + jitter: spacing out
+            # retries recovers better from a flaky link than a fixed pause and
+            # avoids hammering a struggling host in lock-step.
+            import random as _r
+            _t.sleep(0.4 * (2 ** attempt) + _r.uniform(0, 0.3))
     if last_exc is not None:
         try:
             from curl_cffi import requests as _rq

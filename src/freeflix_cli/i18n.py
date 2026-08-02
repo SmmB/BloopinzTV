@@ -12,6 +12,8 @@ Add a key here once and prefix every call site with t(...).
 _FR = {
     # ── Home menu ────────────────────────────────────────────────
     "FreeFlix CLI - Home": "FreeFlix CLI — Accueil",
+    "anime · manga · movies · series": "anime · manga · films · séries",
+    "No match — try another search": "Aucun résultat — essaie une autre recherche",
     "What would you like to do?": "Que veux-tu faire ?",
     "▶ Continue from AniList": "▶ Continuer depuis AniList",
     "📜 My History": "📜 Mon historique",

@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.10.5
+
+Passe design + robustesse/sécurité.
+
+### 🎨 Design
+- **Barres de progression fluides** : résolution 8× (glyphes de remplissage
+  partiel) — fini l'effet « marches d'escalier ».
+- **Curseur de menu modernisé** : barre d'accent + chevron `❯` au lieu du
+  bloc inversé plein largeur ; lignes non sélectionnées lisibles aussi sur
+  **terminal clair** (plus de blanc en dur).
+- **« Continue watching » aligné** : titre · saison·épisode · barre en colonnes
+  nettes (table sans bordure).
+- **Fil d'Ariane raffiné** : chevrons en accent, dernier niveau en gras +
+  tagline en sous-titre du panneau d'accueil.
+- **4 nouveaux thèmes** : Everforest, Kanagawa, Solarized, et **Catppuccin
+  Latte** (thème *clair* — corrige le header invisible sur fond clair).
+- **Badges de statut** en pastilles colorées cohérentes ; état « aucun
+  résultat » plus soigné.
+
+### 🛡️ Robustesse & sécurité
+- **Intégrité des binaires téléchargés** : mpv / ffmpeg / aria2 sont désormais
+  vérifiés (**sha256** pour les versions figées, **plancher de taille** pour
+  toutes) — un binaire corrompu ou altéré (MITM) est refusé avant installation.
+- **Prefetch du stream** : pendant que le menu de sélection du lecteur est
+  affiché, le flux probable est résolu en tâche de fond → lecture quasi
+  instantanée.
+- **Cache disque des segments (LRU, 200 Mo)** : un segment redemandé (retour
+  arrière, ou nouvelle tentative après un 502) est servi sans re-téléchargement.
+
+### 🧹 Hygiène & perf
+- **Éviction du cache HTTP** : purge en tâche de fond des entrées périmées +
+  plafond de taille (50 Mo) — le cache ne gonfle plus indéfiniment.
+- **Session réseau partagée** réutilisée pour la résolution/probe (économise
+  DNS + TLS).
+- **Backoff exponentiel + jitter** sur les requêtes scrapers (meilleure
+  récupération sur connexion instable).
+- **Couverture de tests en CI** (cliquet anti-régression) + nouveaux tests.
+
 ## 1.10.2
 
 Deux corrections sur les connexions instables.

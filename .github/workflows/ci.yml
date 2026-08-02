@@ -43,5 +43,11 @@ jobs:
           pkgutil.walk_packages(freeflix_cli.__path__,'freeflix_cli.')];
           print('all modules import OK')"
 
-      - name: Pytest
-        run: uv run --with . --with pytest -m pytest -q
+      - name: Pytest (+ coverage ratchet)
+        # Coverage is a REGRESSION ratchet, not a quality gate: the floor is set
+        # near today's level so a PR that drops coverage fails, while the (large,
+        # hard-to-test TUI/scraper) untested surface doesn't block the build.
+        # Raise --cov-fail-under over time as more tests land.
+        run: >
+          uv run --with . --with pytest --with pytest-cov -m pytest -q
+          --cov=freeflix_cli --cov-report=term-missing --cov-fail-under=15

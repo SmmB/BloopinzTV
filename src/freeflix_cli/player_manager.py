@@ -22,7 +22,7 @@ from .cli_utils import (
     _suppress_print,
 )
 from .scraping import player
-from .net_config import DNS_OPTIONS
+from .net_config import shared_session
 from typing import Dict
 from .tracker import tracker
 from .i18n import t
@@ -41,6 +41,54 @@ def last_playback_finished_naturally() -> bool:
     """True if the last mpv playback ended at EOF (not a user quit). Only
     meaningful right after a play_video() call that used mpv + IPC."""
     return bool(_LAST_PLAYBACK.get("finished"))
+
+
+# ─── Stream-resolution prefetch cache ──────────────────────────────
+# Resolving a player URL to its real HLS link (scrape embed + decrypt +
+# follow redirects) costs a few seconds. While the user is reading the
+# player-selection menu, we resolve the likely pick in the background so
+# pressing Enter plays instantly. Cached results are short-lived because
+# stream tokens expire — but even a just-expired URL self-heals via the
+# proxy's re-resolution refresher, so a stale hit is never fatal.
+import threading as _threading
+
+_resolve_cache: Dict[str, tuple] = {}   # player_url -> (stream_url, ts)
+_resolve_lock = _threading.Lock()
+_RESOLVE_TTL = 90.0
+
+
+def prefetch_stream(url: str, headers: dict) -> None:
+    """Resolve *url*'s stream in a daemon thread and cache it. Best-effort."""
+    if not url:
+        return
+    with _resolve_lock:
+        ent = _resolve_cache.get(url)
+        if ent and time.time() - ent[1] < _RESOLVE_TTL:
+            return  # already warm
+
+    def _work():
+        try:
+            s = player.get_hls_link(url, headers)
+            if s:
+                with _resolve_lock:
+                    _resolve_cache[url] = (s, time.time())
+        except Exception:
+            pass
+
+    _threading.Thread(target=_work, name="freeflix-prefetch", daemon=True).start()
+
+
+def _cached_resolve(url: str, headers: dict):
+    """get_hls_link with a short-lived cache (fed by prefetch_stream)."""
+    with _resolve_lock:
+        ent = _resolve_cache.get(url)
+        if ent and time.time() - ent[1] < _RESOLVE_TTL:
+            return ent[0]
+    s = player.get_hls_link(url, headers)
+    if s:
+        with _resolve_lock:
+            _resolve_cache[url] = (s, time.time())
+    return s
 
 # ─── Optimus / PRIME : detect dGPU and offload mpv onto it ──────────
 # On hybrid Linux laptops (iGPU + dGPU), launching mpv with the right
@@ -258,15 +306,12 @@ def _probe_stream(stream_url: str, headers: dict,
     owned = False
     try:
         import m3u8 as _m3u8
-        from curl_cffi import requests as _rq
 
         if session is None:
-            sess = _rq.Session(impersonate="chrome")
-            owned = True  # we created it → we must close it
-            try:
-                sess.curl_options.update(DNS_OPTIONS)
-            except Exception:
-                pass
+            # Reuse this thread's persistent session (keep-alive + cached DoH)
+            # instead of paying DNS+TLS for a throwaway one. It's shared, so we
+            # must NOT close it (owned stays False).
+            sess = shared_session()
         else:
             sess = session
         # Plain GET (HLS playlists — incl. .txt / .urlset masters — are
@@ -502,16 +547,11 @@ def estimate_episode_seconds(info: dict) -> float | None:
     low = media_url.split("?")[0].lower()
     if low.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
         return None  # would need ffprobe; not worth it for a size estimate
-    sess = None
     try:
-        from curl_cffi import requests as _rq
         import m3u8 as _m3u8
 
-        sess = _rq.Session(impersonate="chrome")
-        try:
-            sess.curl_options.update(DNS_OPTIONS)
-        except Exception:
-            pass
+        # Reuse this thread's persistent session (don't close it — it's shared).
+        sess = shared_session()
         headers = info.get("probe_headers") or {}
         text = sess.get(media_url, headers=headers, timeout=10).text or ""
         # If we landed on a master, descend into its first media playlist.
@@ -530,12 +570,6 @@ def estimate_episode_seconds(info: dict) -> float | None:
         return total or None
     except Exception:
         return None
-    finally:
-        if sess is not None:
-            try:
-                sess.close()
-            except Exception:
-                pass
 
 
 def format_quality_label(info: dict) -> str:
@@ -1456,7 +1490,7 @@ def play_video(
     else:
         try:
             if output_suppressed:
-                stream_url = player.get_hls_link(url, headers)
+                stream_url = _cached_resolve(url, headers)
             else:
                 with Progress(
                     SpinnerColumn(),
@@ -1464,7 +1498,7 @@ def play_video(
                     console=console,
                 ) as progress:
                     progress.add_task(description="Getting stream URL...", total=None)
-                    stream_url = player.get_hls_link(url, headers)
+                    stream_url = _cached_resolve(url, headers)
             if stream_url and stream_url.startswith("/"):
                 stream_url = (
                     "https://"

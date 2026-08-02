@@ -220,7 +220,10 @@ _BINARY_SOURCES: dict[str, dict[str, dict]] = {
     "linux": {
         "ffmpeg": {
             "url": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz",  # noqa: E501
+            # `latest` build → hash changes with every nightly, so we can't pin
+            # sha256; the size floor still rejects a truncated/HTML-error body.
             "type": "tar.xz", "binary": "ffmpeg", "extras": ["ffprobe"],
+            "min_bytes": 5_000_000,
         },
         # NOTE: mpv AND aria2 are NOT self-managed on Linux — the static builds
         # we used vanished (coletrammer/mpv-static and q3aql/aria2-static-builds
@@ -232,26 +235,36 @@ _BINARY_SOURCES: dict[str, dict[str, dict]] = {
         "ffmpeg": {
             "url": "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-macos-64.zip",
             "type": "zip", "binary": "ffmpeg", "extras": [],
+            "sha256": "ffcd56ce5ef50c4d36d675b0ee80674f5a0869f94746460ff5d058a33cbd3128",
+            "min_bytes": 25_000_000,
         },
         # aria2c: no reliable static macOS build available
         "mpv": {
             "url": "https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-macos-15-intel.zip",
             "type": "zip", "binary": "mpv", "extras": [],
+            "sha256": "41003617ab4f7784394b5ddea7ce51b3e0838e8cfc8166ad1a378b2eda3b583c",
+            "min_bytes": 48_000_000,
         },
     },
     "windows": {
         "ffmpeg": {
             "url": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+            # `latest` build → unpinnable hash; size floor is the guard.
             "type": "zip", "binary": "ffmpeg.exe", "extras": ["ffprobe.exe"],
+            "min_bytes": 5_000_000,
         },
         "aria2c": {
             "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
             "type": "zip", "binary": "aria2c.exe", "extras": [],
+            "sha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
+            "min_bytes": 2_400_000,
         },
         # chafa: no Windows binary in official releases (source-only)
         "mpv": {
             "url": "https://github.com/mpv-player/mpv/releases/download/v0.41.0/mpv-v0.41.0-x86_64-w64-mingw32.zip",
             "type": "zip", "binary": "mpv.exe", "extras": [],
+            "sha256": "a49811c0752c108b8260636f9c6f6fcb97406641c98b30f1e7b500dfb20177de",
+            "min_bytes": 38_000_000,
         },
     },
 }
@@ -294,6 +307,49 @@ def _find_in_zip(archive: Path, target: str) -> Path | None:
     return None
 
 
+def _verify_archive(arc_path: Path, info: dict, label: str) -> bool:
+    """Integrity gate before we ever extract+run a downloaded binary.
+
+    Two checks, both best-effort-safe (a MITM or a corrupted mirror is caught):
+      • size floor (`min_bytes`) — rejects a truncated download or an HTML error
+        page served in place of the archive. Applies to EVERY entry, including
+        the `releases/latest` builds whose exact hash can't be pinned.
+      • sha256 pin (`sha256`) — for version-frozen URLs, the archive must match
+        the known-good digest exactly, or we refuse to install it.
+    """
+    try:
+        size = arc_path.stat().st_size
+    except OSError:
+        return False
+
+    min_bytes = info.get("min_bytes")
+    if min_bytes and size < min_bytes:
+        print_warning(
+            f"{label}: download looks truncated/invalid "
+            f"({size} B < expected ≥ {min_bytes} B) — refusing to install."
+        )
+        return False
+
+    expected = info.get("sha256")
+    if expected:
+        import hashlib
+        h = hashlib.sha256()
+        try:
+            with open(arc_path, "rb") as f:
+                for block in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(block)
+        except OSError:
+            return False
+        got = h.hexdigest()
+        if got.lower() != expected.lower():
+            print_warning(
+                f"{label}: checksum MISMATCH — refusing to install a possibly "
+                f"tampered binary.\n    expected {expected}\n    got      {got}"
+            )
+            return False
+    return True
+
+
 def _download_and_install_binary(label: str, info: dict) -> bool:
     """Download a managed binary from *info["url"]*, extract, place in our bin dir.
 
@@ -312,6 +368,10 @@ def _download_and_install_binary(label: str, info: dict) -> bool:
 
         _download(url, arc_path)
         if not arc_path.is_file():
+            return False
+
+        # Integrity gate: never extract/run an archive that fails size or hash.
+        if not _verify_archive(arc_path, info, label):
             return False
 
         if arc_type in ("tar.xz", "tar.gz"):

@@ -20,3 +20,28 @@ DNS_OPTIONS = {
     CurlOpt.DOH_SSL_VERIFYHOST: 0,
     CurlOpt.CONNECTTIMEOUT: 15,
 }
+
+
+# ── Shared per-thread session ─────────────────────────────────────────
+# Some call sites (stream resolution, size probing) used to spin up a BRAND
+# NEW curl_cffi Session on every call — repaying DNS + TLS each time. This
+# hands back ONE persistent session per thread (keep-alive + cached DoH),
+# already carrying DNS_OPTIONS + chrome impersonation. Thread-local because
+# curl_cffi sessions are not safe to share across threads.
+import threading as _threading
+
+_session_tls = _threading.local()
+
+
+def shared_session():
+    """Return this thread's reusable curl_cffi session (created on first use)."""
+    s = getattr(_session_tls, "s", None)
+    if s is None:
+        from curl_cffi import requests as _rq
+        s = _rq.Session(impersonate="chrome")
+        try:
+            s.curl_options.update(DNS_OPTIONS)
+        except Exception:
+            pass
+        _session_tls.s = s
+    return s

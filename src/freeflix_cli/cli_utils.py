@@ -315,8 +315,9 @@ class crumb:
 
 
 def _crumb_line(max_w: int) -> Text:
-    """The breadcrumb as a single dim line, truncated from the LEFT so the
-    deepest (most useful) levels stay visible."""
+    """The breadcrumb, truncated from the LEFT so the deepest (most useful)
+    levels stay visible. The chevrons are drawn in the accent colour and the
+    last segment is bold-accent, so "where you are" pops out of the trail."""
     txt = crumbs_text()
     if cell_len(txt) > max_w - 4:
         while _crumbs and cell_len("… › " + txt) > max_w - 4:
@@ -324,7 +325,14 @@ def _crumb_line(max_w: int) -> Text:
             if " › " not in txt and cell_len("… › " + txt) <= max_w - 4:
                 break
         txt = "… › " + txt
-    return Text(f"  {txt}", style=color("dim"))
+    parts = txt.split(" › ")
+    out = Text("  ")
+    for i, part in enumerate(parts):
+        if i:
+            out.append(" › ", style=color("accent"))
+        is_last = i == len(parts) - 1
+        out.append(part, style=f"bold {color('accent')}" if is_last else color("dim"))
+    return out
 
 
 def _status_bar(filtering: bool = False) -> Text:
@@ -589,12 +597,16 @@ def select_from_list(options: list[str], prompt: str, default_index: int = 0,
             lines.append(Text(f"  / {flt['q']}▏", style=f"bold {color('info')}"))
 
         if not view:
-            lines.append(Text("     (no match)", style=color("dim")))
+            from .i18n import t as _t
+            empty = Text()
+            empty.append("\n     ")
+            empty.append(icon("search"), style=color("dim"))
+            empty.append(f"  {_t('No match — try another search')}", style=color("dim"))
+            lines.append(empty)
 
         if start_index > 0:
             lines.append(Text("  ↑ ...", style=color("dim")))
 
-        bar_width = max(20, console.size.width)
         for pos in range(start_index, end_index):
             idx = view[pos]
             if grouped and idx in group_headers:
@@ -604,13 +616,19 @@ def select_from_list(options: list[str], prompt: str, default_index: int = 0,
                                   style=f"bold {color('info')}"))
             option = _fit(iconify(options[idx]))
             if pos == selected_index:
-                label = f"  ▌  {option}"
-                pad = max(1, bar_width - cell_len(label) - 1)
-                lines.append(
-                    Text(label + " " * pad, style=f"bold {color('accent')} reverse")
-                )
+                # Soft, high-end cursor: chevron + accent rail + bold accent
+                # text — no harsh full-width reverse. The prefix is 4 cells
+                # ("❯ ▌ ") so the label lines up with the 4-space unselected
+                # rows below.
+                row = Text()
+                row.append("❯ ", style=f"bold {color('accent')}")
+                row.append("▌ ", style=color("accent"))
+                row.append(option, style=f"bold {color('accent')}")
+                lines.append(row)
             else:
-                lines.append(Text(f"     {option}", style="white"))
+                # No hardcoded colour → adopts the terminal's default fg, so it
+                # stays readable on BOTH dark and light themes.
+                lines.append(Text(f"    {option}"))
 
         if end_index < len(view):
             lines.append(Text("  ↓ ...", style=color("dim")))
@@ -1233,32 +1251,38 @@ def print_header(text: str):
 _suppress_print = threading.local()
 
 
+def _badge(role: str, glyph: str) -> str:
+    """A fixed-width coloured status pill (` ✓ `) so every message line starts
+    with the same 3-cell badge — clean, aligned columns down the screen."""
+    return f"[reverse bold {color(role)}] {glyph} [/]"
+
+
 def print_success(message: str):
     """Print a success message with a checkmark."""
     if getattr(_suppress_print, "active", False):
         return
-    console.print(f"[{color('success')}]✓[/{color('success')}] {iconify(message)}")
+    console.print(f"{_badge('success', '✓')} {iconify(message)}")
 
 
 def print_error(message: str):
     """Print an error message with an X."""
     if getattr(_suppress_print, "active", False):
         return
-    console.print(f"[{color('error')}]✗[/{color('error')}] {iconify(message)}")
+    console.print(f"{_badge('error', '✗')} {iconify(message)}")
 
 
 def print_info(message: str):
     """Print an info message."""
     if getattr(_suppress_print, "active", False):
         return
-    console.print(f"[{color('info')}]ℹ[/{color('info')}] {iconify(message)}")
+    console.print(f"{_badge('info', 'ℹ')} {iconify(message)}")
 
 
 def print_warning(message: str):
     """Print a warning message."""
     if getattr(_suppress_print, "active", False):
         return
-    console.print(f"[{color('warning')}]⚠[/{color('warning')}] {iconify(message)}")
+    console.print(f"{_badge('warning', '⚠')} {iconify(message)}")
 
 
 def clean_title(title: str) -> str:

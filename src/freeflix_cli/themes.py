@@ -83,6 +83,37 @@ THEMES = {
         "warning": "#f6c177", "dim": "#6e6a86",
     },
     # High-contrast monochrome (accessibility / e-ink).
+    # Everforest Dark — https://github.com/sainnhe/everforest
+    "everforest": {
+        "label": "Everforest",
+        "accent": "#83c092", "header": "bold #d3c6aa", "border": "#a7c080",
+        "success": "#a7c080", "error": "#e67e80", "info": "#7fbbb3",
+        "warning": "#dbbc7f", "dim": "#859289",
+    },
+    # Kanagawa (Wave) — https://github.com/rebelot/kanagawa.nvim
+    "kanagawa": {
+        "label": "Kanagawa",
+        "accent": "#7e9cd8", "header": "bold #dcd7ba", "border": "#957fb8",
+        "success": "#98bb6c", "error": "#e46876", "info": "#7aa89f",
+        "warning": "#e6c384", "dim": "#727169",
+    },
+    # Solarized Dark — https://ethanschoonover.com/solarized
+    "solarized": {
+        "label": "Solarized Dark",
+        "accent": "#268bd2", "header": "bold #93a1a1", "border": "#2aa198",
+        "success": "#859900", "error": "#dc322f", "info": "#268bd2",
+        "warning": "#b58900", "dim": "#586e75",
+    },
+    # Catppuccin Latte — the LIGHT palette. Header text is DARK so it stays
+    # readable on a light-background terminal (the default theme's "bold white"
+    # header is invisible there).
+    "latte": {
+        "label": "Catppuccin Latte (light)",
+        "accent": "#1e66f5", "header": "bold #4c4f69", "border": "#8839ef",
+        "success": "#40a02b", "error": "#d20f39", "info": "#04a5e5",
+        "warning": "#df8e1d", "dim": "#9ca0b0",
+    },
+    # High-contrast monochrome (accessibility / e-ink).
     "mono": {
         "label": "Monochrome",
         "accent": "bright_white", "header": "bold white", "border": "white",

@@ -198,6 +198,15 @@ def play_episode_flow(
             (i for i, p in enumerate(supported_players) if p.name == last), 0
         )
 
+        # Warm the likely pick's stream in the background while the user reads
+        # the menu, so hitting Enter plays (near-)instantly instead of stalling
+        # a few seconds on resolution.
+        try:
+            from ..player_manager import prefetch_stream
+            prefetch_stream(supported_players[default_idx].url, headers)
+        except Exception:
+            pass
+
         player_idx = select_from_list(
             player_options,
             t("🎮 Select Player:"),

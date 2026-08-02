@@ -320,16 +320,27 @@ def _show_stats():
 
 
 def _progress_bar_text(pct: int, width: int = 14):
-    """A small themed progress bar : ▐████░░░░▌ 68%."""
+    """A smooth themed progress bar with 8× sub-cell resolution.
+
+    Uses the partial-block glyphs (▏▎▍▌▋▊▉█) so the fill edge lands on an
+    eighth of a cell instead of snapping to a whole block — the bar reads as a
+    continuous line rather than a coarse staircase. Thin rails frame it.
+    """
     from rich.text import Text
     from .themes import color
+    _EIGHTHS = " ▏▎▍▌▋▊▉█"  # 0/8 … 8/8
     pct = max(0, min(100, int(pct)))
-    filled = int(round(pct / 100 * width))
+    eighths = int(round(pct / 100 * width * 8))
+    full, rem = divmod(eighths, 8)
     t = Text()
-    t.append("▐", style=color("dim"))
-    t.append("█" * filled, style=color("success"))
-    t.append("░" * (width - filled), style=color("dim"))
-    t.append("▌", style=color("dim"))
+    t.append("▏", style=color("dim"))
+    t.append("█" * full, style=color("success"))
+    if rem:
+        t.append(_EIGHTHS[rem], style=color("success"))
+    empty = width - full - (1 if rem else 0)
+    if empty > 0:
+        t.append(" " * empty, style=color("dim"))
+    t.append("▏", style=color("dim"))
     t.append(f" {pct}%", style=color("info"))
     return t
 
@@ -371,27 +382,45 @@ def _home_dashboard():
         body.append(f"{len(_new)}", style=f"bold {color('accent')}")
 
     if history:
+        from rich.console import Group
+        from rich.table import Table
         from .player_manager import episode_progress
-        body.append(f"\n\n  {icon('play')} {t('Continue watching')}\n",
+        body.append(f"\n\n  {icon('play')} {t('Continue watching')}",
                     style=f"bold {color('header')}")
+
+        # A borderless grid so title, meta and bar line up in clean columns
+        # instead of the bar floating after ragged-length titles.
+        grid = Table.grid(padding=(0, 2), expand=False)
+        grid.add_column(no_wrap=True, overflow="ellipsis", max_width=30)  # series
+        grid.add_column(no_wrap=True, overflow="ellipsis", max_width=22)  # meta
+        grid.add_column(no_wrap=True, justify="left")                      # bar
         for e in history[:4]:
             s = e.get("series_title", "?")
             se = e.get("season_title", "") or ""
             ep = e.get("episode_title", "") or ""
-            label = s + (f" · {se}" if se else "") + (f" · {ep}" if ep else "")
-            body.append(f"\n   • {label[:44]}", style="white")
+            title_cell = Text(f"   {s}", style="white")
+            meta = " · ".join(x for x in (se, ep) if x)
+            meta_cell = Text(meta, style=color("dim"))
             pos, dur = episode_progress(s, se, ep)
             if pos and dur and dur > 0:
-                body.append("   ")
-                body.append_text(_progress_bar_text(int(pos / dur * 100), width=12))
+                bar_cell = _progress_bar_text(int(pos / dur * 100), width=12)
             elif pos and pos > 30:
-                body.append(f"   ▸ {int(pos // 60)}m", style=color("info"))
-    else:
-        body.append(f"\n\n  {t('Nothing watched yet — pick a source below to start!')}",
-                    style=color("dim"))
+                bar_cell = Text(f"▸ {int(pos // 60)}m", style=color("info"))
+            else:
+                bar_cell = Text("")
+            grid.add_row(title_cell, meta_cell, bar_cell)
+        inner = Group(body, Text(""), grid)
+        return Panel(inner, border_style=color("accent"), expand=True, box=box.ROUNDED,
+                     padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left",
+                     subtitle=f"[{color('dim')}]{t('anime · manga · movies · series')}[/]",
+                     subtitle_align="right")
 
+    body.append(f"\n\n  {t('Nothing watched yet — pick a source below to start!')}",
+                style=color("dim"))
     return Panel(body, border_style=color("accent"), expand=True, box=box.ROUNDED,
-                 padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left")
+                 padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left",
+                 subtitle=f"[{color('dim')}]{t('anime · manga · movies · series')}[/]",
+                 subtitle_align="right")
 
 
 def _theme_preview_panel(theme: dict, title: str):
@@ -814,6 +843,14 @@ def main():
     # blocks the home; results appear once ready.
     from . import recent
     recent.start_background_fetch()
+
+    # Evict stale/oversized HTTP-cache entries in the background so the cache
+    # dir can't grow unbounded over months. Best-effort, never blocks launch.
+    try:
+        from . import httpcache
+        httpcache.prune_async()
+    except Exception:
+        pass
 
     # ── Resumable dependency gate ──────────────────────────────
     #    Until the "all good" flag is cached, every launch re-checks what's

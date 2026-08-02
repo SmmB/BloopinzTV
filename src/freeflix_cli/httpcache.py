@@ -103,3 +103,59 @@ def stats() -> tuple[int, float]:
     except OSError:
         pass
     return count, size / (1024 * 1024)
+
+
+# ── Eviction ──────────────────────────────────────────────────────────
+# Nothing ever deleted expired entries before, so the cache grew unbounded
+# (thousands of tiny .json files over months). prune() drops anything older
+# than `max_age_s` and then, if still over `max_mb`, deletes the OLDEST files
+# (by mtime) until back under the cap. Best-effort; runs in the background at
+# startup so it never blocks launch.
+
+MAX_AGE_S = 7 * 24 * 3600   # a week — well past any list/metadata TTL
+MAX_MB = 50.0               # hard size cap for the whole HTTP cache
+
+
+def prune(max_age_s: int = MAX_AGE_S, max_mb: float = MAX_MB) -> int:
+    """Delete stale/oversized cache entries. Returns how many files were removed."""
+    removed = 0
+    now = time.time()
+    kept: list[tuple[float, int, Path]] = []  # (mtime, size, path) for survivors
+    try:
+        entries = list(_DIR.glob("*.json"))
+    except OSError:
+        return 0
+    for p in entries:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        if now - st.st_mtime > max_age_s:
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                pass
+        else:
+            kept.append((st.st_mtime, st.st_size, p))
+
+    # Size cap: evict oldest-first until under max_mb.
+    total = sum(s for _, s, _ in kept)
+    limit = max_mb * 1024 * 1024
+    if total > limit:
+        for _mtime, size, p in sorted(kept):  # oldest mtime first
+            if total <= limit:
+                break
+            try:
+                p.unlink()
+                removed += 1
+                total -= size
+            except OSError:
+                pass
+    return removed
+
+
+def prune_async() -> None:
+    """Fire prune() on a daemon thread so startup never waits on cache I/O."""
+    import threading
+    threading.Thread(target=prune, name="freeflix-cache-prune", daemon=True).start()
