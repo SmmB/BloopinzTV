@@ -1192,6 +1192,14 @@ def _download_stream(
             "--newline",
             "--no-overwrites",
             "--concurrent-fragments", "16",
+            # NEVER skip a fragment on a flaky link — a skipped fragment makes a
+            # gappy video that jumps parts. Retry each fragment hard, and if one
+            # truly can't be fetched, ABORT (the partial stays in .temp/ and is
+            # resumable) rather than produce an incomplete file in Downloads.
+            "--abort-on-unavailable-fragments",
+            "--fragment-retries", "50",
+            "--retries", "10",
+            "--retry-sleep", "2",
             "--add-header", f"Referer:{referer}",
             "--add-header", f"User-Agent:{user_agent}",
             "--merge-output-format", "mp4",
@@ -1245,6 +1253,12 @@ def _download_stream(
                 "--no-warnings",
                 "--newline",
                 "--no-overwrites",
+                # Never leave gaps: retry each fragment hard, abort (resumable in
+                # .temp/) rather than skip and produce a jumpy incomplete file.
+                "--abort-on-unavailable-fragments",
+                "--fragment-retries", "50",
+                "--retries", "10",
+                "--retry-sleep", "2",
                 "--add-header", f"Referer:{referer}",
                 "--add-header", f"User-Agent:{user_agent}",
                 "-P", f"home:{out_dir}",

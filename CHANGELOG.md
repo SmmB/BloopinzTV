@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.10.2
+
+Deux corrections sur les connexions instables.
+
+### 🎬 Plus de désync audio/vidéo en lecture
+- Quand la connexion sautait, un segment HLS pouvait arriver **tronqué** : mpv
+  le lisait quand même et l'audio finissait décalé de la vidéo (impossible de
+  suivre la suite). Désormais le proxy **bufferise chaque segment en entier**
+  (reprise en Range + re-résolution du jeton si l'URL expire) et ne le sert
+  **que complet** — sinon il renvoie 502 et le lecteur le redemande. Plus de
+  segment à moitié → plus de décalage son/image.
+
+### ⬇️ Plus de téléchargements « à trous » dans le dossier principal
+- Sur connexion qui dérange, yt-dlp **sautait** les fragments manquants et
+  produisait une vidéo incomplète qui sautait des passages — et elle atterrissait
+  quand même dans Downloads. Maintenant chaque fragment est **réessayé fort**
+  (`--fragment-retries 50`) et, si un fragment reste introuvable, le
+  téléchargement **s'arrête** (`--abort-on-unavailable-fragments`) : le partiel
+  reste dans `.temp/` (reprenable) et **rien d'incomplet n'est déposé** dans le
+  dossier principal.
+
+## 1.10.1
+
+- **Cache disque « buffer loin devant »** : au lieu de ~2 min de cache en RAM,
+  le lecteur peut mettre le flux en cache **sur disque très en avance**
+  (jusqu'à ~30 min de marge) — réglable dans les paramètres. Une coupure réseau
+  de plusieurs minutes ne casse plus la lecture.
+- **Fin du spam de traceback** `ConnectionResetError` / `BrokenPipeError` :
+  quand mpv ferme une connexion de segment, le proxy l'ignore silencieusement.
+
 ## 1.10.0
 
 Grosse passe technique — plus rapide, plus robuste, plus léger, et testé.

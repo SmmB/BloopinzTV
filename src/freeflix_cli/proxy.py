@@ -312,6 +312,76 @@ def resilient_body(url, base_headers, start_offset=0, first_resp=None,
             time.sleep(1.0)
 
 
+def fetch_segment(url, base_headers, budget=120.0):
+    """
+    Download a WHOLE HLS segment into memory — resuming on a stall (HTTP Range)
+    and re-resolving on an expired token — and return ``(ok, data)``.
+
+    ``ok`` is True only when the segment is COMPLETE. A partial / failed segment
+    returns ``(False, b"")`` so /ts can answer 502 and let the player re-request
+    it. This is the crux of the A/V-sync fix : mpv must never receive a
+    truncated segment (a half-segment desyncs audio from video), so we buffer +
+    verify the whole thing before sending a single byte.
+    """
+    buf = bytearray()
+    sent = 0
+    total = None
+    refresh_tries = 0
+    last_progress = time.time()
+
+    while True:
+        if time.time() - last_progress > budget:
+            return False, b""
+        h = dict(base_headers or {})
+        if sent:
+            h["Range"] = f"bytes={sent}-"
+        try:
+            resp = get_session().request("GET", url, headers=h, stream=True, timeout=60)
+        except Exception:
+            _reset_session()
+            time.sleep(0.5)
+            continue
+
+        st = getattr(resp, "status_code", 0)
+        if st in (401, 403, 410):
+            fresh = _refreshed_url(url)
+            if fresh and fresh != url and refresh_tries < 4:
+                refresh_tries += 1
+                url = fresh
+                time.sleep(0.3)
+                continue
+            return False, b""
+        if st == 404:
+            return False, b""
+        if st == 200 and sent > 0:
+            # Server ignored our Range → it's resending from the start ; drop
+            # what we had and take the full body cleanly (no duplication).
+            buf = bytearray()
+            sent = 0
+            total = None
+        if st not in (200, 206):
+            time.sleep(0.5)
+            continue
+        if total is None:
+            total = _upstream_total(resp, 0)
+
+        try:
+            for chunk in resp.iter_content():
+                if chunk:
+                    buf += chunk
+                    sent += len(chunk)
+                    add_bytes(len(chunk))
+                    last_progress = time.time()
+            # Upstream ended : complete if we reached the known size (or size
+            # unknown but a clean EOF).
+            if total is None or sent >= total:
+                return True, bytes(buf)
+            # Short read → loop and resume from `sent`.
+        except Exception:
+            _reset_session()
+            time.sleep(0.5)
+
+
 def fetch_with_retry(url, headers, method="GET", stream=False, max_retries=3,
                      client_range=None):
     """Request with retries, reusing the thread-local session. *client_range*
@@ -619,17 +689,13 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             self._send_bytes(400, "Missing URL")
             return
         headers = self._parse_headers_arg(args)
-        resp = fetch_with_retry(target_url, headers, stream=True)
-        if not resp:
-            self._send_bytes(502, "Error fetching segment")
+        # Buffer the WHOLE segment and only send it if complete — a truncated
+        # segment desyncs audio/video, so complete-or-502 (the player re-asks).
+        ok, data = fetch_segment(target_url, headers)
+        if not ok:
+            self._send_bytes(502, "Segment incomplete")
             return
-        total = _upstream_total(resp, 0)
-        self._stream(
-            200,
-            {"Content-Type": "video/mp2t", "Access-Control-Allow-Origin": "*"},
-            resilient_body(target_url, headers, start_offset=0,
-                           first_resp=resp, first_total=total),
-        )
+        self._send_bytes(200, data, "video/mp2t", {"Access-Control-Allow-Origin": "*"})
 
     def _h_video(self, args):
         target_url = args.get("url")
