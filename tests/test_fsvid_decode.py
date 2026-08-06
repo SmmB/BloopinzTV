@@ -42,6 +42,34 @@ def test_decode_real_sample():
     assert out.startswith("https://r1.fsvid.lol/hls2/") and "master.m3u8" in out
 
 
+def test_decode_new_algorithm_real_sample():
+    """2026 fsvid algorithm: hostname-seeded, positional XOR key, reversed body.
+
+    Real payload captured from a fsvid.lol embed. The key is
+    ``(0x3d + i*89 + H) & 255`` where H = sum(hostname chars) & 255, applied to
+    the REVERSED base64 body. Must decode with hostname='fsvid.lol'.
+    """
+    payload = (
+        "YMzVO8H8CY7sRaPoFKIROPVRY8lHOIFmwM1twKx10rsIuqUa4Uwp/lBxnVA/iGTOlXrLrXDV/BDt7BK"
+        "wIxCyBCeMLUfGEbPiLJnQCbqpQorDGapLFKUaSYstfPEfMPYDoKUX1+UH5/MeuVVQrARk3wgjxz9yxD"
+        "2Ds2iO4F+/sh6jDROuR3DeF3XedGfbNtj5K43/FobmSolIFL0DKaRRZtQte8B+n/EjwvNVg+UcuSEQ/"
+        "AVr8Qw53jx10zjVj3bfpQzTpQXoUBS+GHPtBX/bcGHFJYnHZt7kEsuxQan0U6Y="
+    )
+    code = (
+        'var b = atob(s), a = b.split("").reverse().join(""), r = "";'
+        'for (var i = 0; i < a.length; i++) {'
+        'var kk = (0x3d + i * 89 + H) & 255;'
+        'r += String.fromCharCode(a.charCodeAt(i) ^ kk)}'
+        'return /^https?:/.test(r) ? r : "https://s1.fsvid.lol/troll/master.m3u8"'
+        '})("' + payload + '")'
+    )
+    out = player._fsvid_decode(code, "fsvid.lol")
+    assert out is not None
+    assert out.startswith("https://r1.fsvid.lol/hls2/") and ".m3u8" in out
+    # Wrong hostname must NOT decode to a valid URL (proves H is used).
+    assert player._fsvid_decode(code, "wronghost.example") is None
+
+
 def test_decode_missing_returns_none():
     assert player._fsvid_decode("no key here") is None
     assert player._fsvid_decode("") is None

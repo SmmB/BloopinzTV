@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.10.7
+
+Réparation des lecteurs **premium** de French-Stream (fsvid.lol / vidzy).
+
+- fsvid/vidzy a changé son obfuscation : le vrai `master.m3u8` est maintenant
+  construit avec une **clé XOR positionnelle** `(0x3d + i*89 + H)` — où `H` est
+  un hash du **hostname** de l'embed — appliquée au base64 **inversé**. L'ancien
+  décodeur (clé fixe de 8 octets) ne matchait plus → les lecteurs *premium* et
+  *vidzy* renvoyaient `None` et apparaissaient **cassés**.
+- Le décodeur reproduit désormais exactement le nouvel algorithme (constantes
+  lues dans le JS pour résister à un simple ajustement), avec repli sur l'ancien.
+  → **premium** et **vidzy** rejouent, **et se téléchargent** (le download passe
+  par le même résolveur, donc il récupère le vrai lien).
+
 ## 1.10.6
 
 Streaming plus rapide et plus fluide (comportement autoflix retrouvé).

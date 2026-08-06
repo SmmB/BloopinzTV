@@ -622,33 +622,84 @@ def get_hls_link_fsvid(url: str, headers: dict) -> str | None:
     except Exception:
         code = resp.text or ""
 
-    return _fsvid_decode(code)
+    # The current algorithm derives its key from the EMBED HOST (location.
+    # hostname in the browser), so pass it through for an exact reproduction.
+    try:
+        host = url.split("/")[2]
+    except Exception:
+        host = "fsvid.lol"
+    return _fsvid_decode(code, host)
 
 
-def _fsvid_decode(code: str):
-    """Pure decoder (no network) : pull the XOR key + base64 payload out of the
-    fsvid/vidzy player JS and reconstruct the real master.m3u8 URL. Testable."""
-    km = re.search(r"var\s+k\s*=\s*\[([0-9,\s]+)\]", code or "")
+def _fsvid_decode(code: str, hostname: str = "fsvid.lol"):
+    """Pure decoder (no network) : reconstruct the real master.m3u8 URL from the
+    fsvid/vidzy player JS. Testable.
+
+    Two algorithms are supported (the host has rotated its obfuscation) :
+
+    NEW (2026) — the video.js `sources.src` IIFE :
+        H = (sum of location.hostname char codes) & 255
+        b = atob(payload) ; a = reverse(b)
+        for each i: kk = (OFFSET + i*MULT + H) & 255 ; r += chr(a[i] ^ kk)
+      OFFSET/MULT are read straight out of the JS so a constant tweak can't
+      break us, and `hostname` MUST be the embed host (fsvid.lol / vidzy.org).
+
+    OLD — a fixed 8-byte XOR key `var k=[…]` (kept as a fallback).
+    """
+    code = code or ""
+
+    # ── NEW algorithm : (OFFSET + i*MULT + H) with a reversed base64 body ──
+    km = re.search(
+        r"\(\s*(0x[0-9a-fA-F]+|\d+)\s*\+\s*i\s*\*\s*(\d+)\s*\+\s*H\s*\)", code
+    )
+    if km:
+        try:
+            offset = int(km.group(1), 16) if km.group(1).lower().startswith("0x") else int(km.group(1))
+            mult = int(km.group(2))
+        except ValueError:
+            offset = mult = None
+        # Payload = the base64 argument of the IIFE that contains this key.
+        payload = None
+        m2 = re.search(r'\}\)\(\s*"([A-Za-z0-9+/=]{40,})"\s*\)', code[km.start():])
+        if not m2:  # some builds put the arg before the key text — search whole file
+            m2 = re.search(r'\}\)\(\s*"([A-Za-z0-9+/=]{40,})"\s*\)', code)
+        if payload is None and m2:
+            payload = m2.group(1)
+        reverse = ".reverse()" in code
+        if offset is not None and payload:
+            H = 0
+            for ch in (hostname or ""):
+                H = (H + ord(ch)) & 255
+            try:
+                raw = base64.b64decode(payload)
+                if reverse:
+                    raw = raw[::-1]
+                out = "".join(
+                    chr(raw[i] ^ ((offset + i * mult + H) & 255)) for i in range(len(raw))
+                )
+                if out.startswith("http") and ".m3u8" in out:
+                    return out
+            except Exception:
+                pass  # fall through to the legacy path
+
+    # ── OLD algorithm : fixed 8-byte XOR key ──
+    km = re.search(r"var\s+k\s*=\s*\[([0-9,\s]+)\]", code)
     if not km:
         return None
     key = [int(x) for x in km.group(1).split(",") if x.strip() != ""]
     if not key:
         return None
-
-    # The base64 payload is the argument of the IIFE that uses that key.
     payload = None
     for m in re.finditer(r'\}\)\(\s*"([A-Za-z0-9+/=]+)"\s*\)', code[km.start():]):
         payload = m.group(1)
         break
     if not payload:
         return None
-
     try:
         raw = base64.b64decode(payload)
         out = "".join(chr(raw[i] ^ key[i % len(key)]) for i in range(len(raw)))
     except Exception:
         return None
-
     return out if out.startswith("http") and ".m3u8" in out else None
 
 
