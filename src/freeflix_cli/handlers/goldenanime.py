@@ -74,9 +74,12 @@ def handle_goldenanime():
     query = get_user_input(
         "Search query (Title or AniList ID) (or 'exit' to back)",
         header=f"{icon('sparkle')} GoldenAnime (VO)",
+        history=tracker.get_search_history(),
     )
     if not query or query.lower() == "exit":
         return
+    if not query.isdigit():  # don't pollute history with bare AniList IDs
+        tracker.add_search_query(query)
 
     anilist_id = None
     title = None

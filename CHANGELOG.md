@@ -13,6 +13,10 @@ Réparation des lecteurs **premium** de French-Stream (fsvid.lol / vidzy).
   lues dans le JS pour résister à un simple ajustement), avec repli sur l'ancien.
   → **premium** et **vidzy** rejouent, **et se téléchargent** (le download passe
   par le même résolveur, donc il récupère le vrai lien).
+- **Historique de recherche sur TOUS les providers** : Coflix, French-Manga,
+  GoldenAnime et GoldenMS mémorisent désormais les recherches et proposent le
+  rappel ↑/↓ (« Recherches récentes »), comme Anime-Sama / French-Stream /
+  Papystreaming l'avaient déjà — parité enfin complète.
 
 ## 1.10.6
 

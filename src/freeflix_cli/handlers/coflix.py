@@ -29,9 +29,11 @@ def handle_coflix():
         query = get_user_input(
             t("Search query (or 'exit' to back)"),
             header=f"{icon('movie')} Coflix",
+            history=tracker.get_search_history(),
         )
         if not query or query.lower() == "exit":
             break
+        tracker.add_search_query(query)
 
         with spinner(f"{t('Searching for')} {query}…"):
             try:

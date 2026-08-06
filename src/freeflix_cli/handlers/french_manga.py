@@ -13,6 +13,7 @@ from ..cli_utils import (
 from .playback import play_episode_flow, download_episodes_batch, _pick_player_for_batch
 from ..i18n import t
 from ..icons import icon
+from ..tracker import tracker
 
 
 def _episode_sort_key(ep_num):
@@ -69,9 +70,11 @@ def handle_french_manga():
     query = get_user_input(
         t("Search query (or 'exit' to back)"),
         header=f"{icon('manga')} French-Manga",
+        history=tracker.get_search_history(),
     )
     if not query or query.lower() == "exit":
         return
+    tracker.add_search_query(query)
 
     with spinner(f"{t('Searching for')} {query}…"):
         results = french_manga.search(query)

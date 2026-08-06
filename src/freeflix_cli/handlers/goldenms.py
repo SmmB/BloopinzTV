@@ -86,10 +86,13 @@ def handle_goldenms():
     is_movie = c_idx == 0
 
     title = get_user_input(
-        t("Enter Movie title") if is_movie else t("Enter Series title"), header=f"{icon('star')} GoldenMS (Movies & Series)"
+        t("Enter Movie title") if is_movie else t("Enter Series title"),
+        header=f"{icon('star')} GoldenMS (Movies & Series)",
+        history=tracker.get_search_history(),
     )
     if not title:
         return
+    tracker.add_search_query(title)
 
     print_info(f"Searching Cinemeta for '{title}'...")
     metas = search_cinemeta(title, is_movie)
