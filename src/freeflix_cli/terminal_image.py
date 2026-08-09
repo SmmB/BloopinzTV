@@ -23,6 +23,8 @@ Everything degrades gracefully :
 So the rest of the app can call render_url() unconditionally, on any OS.
 """
 
+from __future__ import annotations  # `str | None` annotations work on Python 3.9
+
 import os
 import re
 import shutil

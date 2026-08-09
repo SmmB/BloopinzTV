@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.10.9
+
+- **Correctif Python 3.9** : `terminal_image.py` utilisait une annotation
+  `str | None` évaluée à l'import → `TypeError` au lancement sur Python 3.9
+  (1.10.8 crashait donc à l'import pour ces utilisateurs). Ajout de
+  `from __future__ import annotations`. Aucun changement de comportement.
+
 ## 1.10.8
 
 Posters **nets** (vrais pixels) au lieu des blocs Unicode flous — partout,
