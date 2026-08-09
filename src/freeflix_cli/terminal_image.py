@@ -1,17 +1,26 @@
 """
-Render anime posters INSIDE the terminal, via chafa.
+Render posters INSIDE the terminal, via chafa — as REAL PIXELS when possible.
 
-chafa stays 100% inside the terminal : it prints either sixel graphics
-(photo quality) or coloured Unicode blocks (▀▄) to stdout. Unlike
-ueberzug it does NOT create an overlay window, so it works in Konsole
-under Wayland with zero extra setup.
+chafa is only the encoder; the goal is to *avoid* its blocky Unicode-block
+output and use a true graphics protocol whenever the terminal speaks one, so
+posters look photo-sharp instead of like coloured ▀▄ mosaics:
+
+  • kitty graphics  → Kitty, Ghostty, WezTerm            (sharpest)
+  • iTerm2 inline   → iTerm2 (macOS), WezTerm
+  • sixel           → KDE Konsole, foot, Windows Terminal, xterm(+sixel)…
+  • Unicode blocks  → universal last-resort fallback (any terminal, SSH, cmd)
+
+``detect_image_protocol`` picks the best one; sixel is confirmed by ASKING the
+terminal (DA1) so we never paint escape garbage on a terminal where sixel is
+merely *possible* but currently off (e.g. Konsole's default).
 
 Everything degrades gracefully :
   * chafa not installed         → functions are no-ops (return False) ;
   * image download fails        → no-op ;
-  * poster mode set to "off"    → no-op.
+  * poster mode set to "off"    → no-op ;
+  * no pixel protocol           → coloured Unicode blocks.
 
-So the rest of the app can call render_url() unconditionally.
+So the rest of the app can call render_url() unconditionally, on any OS.
 """
 
 import os
@@ -47,10 +56,12 @@ def chafa_available() -> bool:
 
 
 def reset_cache():
-    """Forget the cached chafa lookup (call after installing chafa)."""
-    global _CHAFA_PATH, _CHAFA_VER
+    """Forget cached probes (call after installing chafa or toggling the
+    terminal's Sixel setting) so protocol detection re-runs fresh."""
+    global _CHAFA_PATH, _CHAFA_VER, _SIXEL_OK
     _CHAFA_PATH = None
     _CHAFA_VER = None
+    _SIXEL_OK = None
 
 
 _CHAFA_VER = None
@@ -73,38 +84,172 @@ def _chafa_version() -> tuple:
     return _CHAFA_VER
 
 
+def _int(s) -> int:
+    """Parse an int from a string (e.g. KONSOLE_VERSION='260403'), else 0."""
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return 0
+
+
 def detect_image_protocol() -> str:
     """
-    The high-quality image protocol we can be SURE the terminal speaks, so we
-    can hand chafa a real graphics format (photo-quality) instead of Unicode
-    blocks. Returns 'kitty' | 'iterm' | 'auto' — 'auto' means "let chafa decide"
-    (it still autodetects sixel/kitty on its own; we only override when certain).
+    The best REAL-PIXEL image protocol the current terminal speaks, so we hand
+    chafa a graphics format (photo-quality) instead of Unicode blocks. Returns
+    'kitty' | 'iterm' | 'sixel' | 'auto'.
+
+    Detection is env-based (zero-risk, cross-platform: Linux / macOS / Windows)
+    and covers every mainstream pixel-capable terminal. 'auto' means "let chafa
+    autodetect" — a safe fallback that still upgrades on some terminals.
+
+    Pixel support by terminal (all handled below):
+      • kitty protocol : Kitty, Ghostty, WezTerm            (chafa ≥ 1.12)
+      • iTerm2 inline  : iTerm2 (macOS), WezTerm             (chafa ≥ 1.6)
+      • sixel          : Konsole, foot, Windows Terminal,
+                         contour, mlterm, xterm(+sixel), rio (chafa ≥ 1.4)
     """
     env = os.environ
     term = (env.get("TERM") or "").lower()
     prog = (env.get("TERM_PROGRAM") or "").lower()
     ver = _chafa_version()
-    # kitty graphics protocol : Kitty, Ghostty, WezTerm (chafa >= 1.12)
+
+    # 1) kitty graphics protocol — sharpest. Kitty / Ghostty / WezTerm.
     if ver >= (1, 12) and (
         env.get("KITTY_WINDOW_ID") or "kitty" in term
-        or prog == "ghostty" or "WEZTERM_PANE" in env
+        or prog == "ghostty" or env.get("GHOSTTY_RESOURCES_DIR")
+        or "WEZTERM_PANE" in env
     ):
         return "kitty"
-    # iTerm2 inline images : iTerm.app (chafa >= 1.6)
+
+    # 2) iTerm2 inline images — macOS iTerm2.
     if ver >= (1, 6) and (prog == "iterm.app" or env.get("ITERM_SESSION_ID")):
         return "iterm"
+
+    # 3) sixel — the widest pixel protocol (Konsole, foot, Windows Terminal,
+    #    contour, mlterm, rio, sixel-enabled xterm).
+    if ver >= (1, 4):
+        # Terminals where sixel is ALWAYS ON (no toggle) → trust the env, because
+        # many of them (Konsole included) don't advertise sixel in their DA1
+        # reply, so the query below would wrongly say "no" and we'd fall back to
+        # blocks. Konsole has shipped sixel enabled-by-default since 22.12
+        # (KONSOLE_VERSION 221200); foot always supports it.
+        kv = _int(env.get("KONSOLE_VERSION"))
+        if kv >= 221200 or "foot" in term:
+            return "sixel"
+        # Otherwise CONFIRM via DA1 — covers Windows Terminal (opt-in), contour,
+        # mlterm, rio, and sixel-enabled xterm — and, crucially, never emits
+        # sixel to a terminal that has it OFF (which would paint escape garbage).
+        if _terminal_supports_sixel():
+            return "sixel"
+
     return "auto"
+
+
+# Tri-state cache : None = not probed yet, True/False = probe result.
+_SIXEL_OK = None
+
+
+def _terminal_supports_sixel() -> bool:
+    """Ask the terminal (Primary Device Attributes) whether sixel is ACTIVE.
+
+    Sends ``ESC [ c`` and parses the reply ``ESC [ ? … c`` : attribute ``4``
+    means sixel. Universal (every VT100+ terminal answers DA1) and authoritative
+    — it reflects whether sixel is actually enabled RIGHT NOW, not just that the
+    emulator could do it. Cached; best-effort (any issue → False → blocks).
+
+    Must run on the MAIN thread (it briefly puts the tty in cbreak mode); the
+    inline-blocks path never calls it, and the full-screen render does so from
+    the main thread. Windows has no termios, so we trust Windows Terminal's env.
+    """
+    global _SIXEL_OK
+    if _SIXEL_OK is not None:
+        return _SIXEL_OK
+    _SIXEL_OK = False
+    try:
+        import sys
+        if os.name == "nt":
+            _SIXEL_OK = bool(os.environ.get("WT_SESSION"))
+            return _SIXEL_OK
+        import termios
+        import tty
+        import select as _sel
+        fdin, fdout = sys.stdin.fileno(), sys.stdout.fileno()
+        if not (os.isatty(fdin) and os.isatty(fdout)):
+            return False
+        old = termios.tcgetattr(fdin)
+        buf = b""
+        try:
+            tty.setcbreak(fdin)
+            os.write(fdout, b"\x1b[c")
+            import time as _t
+            deadline = _t.time() + 0.4
+            while _t.time() < deadline:
+                r, _, _ = _sel.select([fdin], [], [], max(0.0, deadline - _t.time()))
+                if not r:
+                    break
+                chunk = os.read(fdin, 128)
+                if not chunk:
+                    break
+                buf += chunk
+                if b"c" in chunk:
+                    break
+        finally:
+            termios.tcsetattr(fdin, termios.TCSADRAIN, old)
+            try:
+                termios.tcflush(fdin, termios.TCIFLUSH)  # drop any stray bytes
+            except Exception:
+                pass
+        m = re.search(rb"\x1b\[\?([0-9;]+)c", buf)
+        if m:
+            _SIXEL_OK = b"4" in m.group(1).split(b";")
+    except Exception:
+        _SIXEL_OK = False
+    return _SIXEL_OK
+
+
+def warm_up() -> str:
+    """Probe the terminal ONCE, on the main thread, at startup — before any
+    Rich Live grabs the tty — so the sixel DA1 query never races the UI. Returns
+    the detected protocol (also caches it). Safe no-op if chafa is absent."""
+    try:
+        return detect_image_protocol()
+    except Exception:
+        return "auto"
+
+
+def sixel_hint() -> str | None:
+    """A one-line tip when the terminal is a KNOWN sixel-capable one but sixel
+    came back OFF — so the user can flip it on for photo-sharp posters. Returns
+    None when nothing to say (kitty/iterm/other, or sixel already on)."""
+    env = os.environ
+    if detect_image_protocol() != "auto":
+        return None  # already using a real pixel protocol
+    if env.get("KONSOLE_VERSION"):
+        return ("Konsole can show photo-sharp posters via Sixel — enable it in "
+                "Settings → Edit Profile → Terminal Features → Sixel graphics.")
+    if env.get("WT_SESSION"):
+        return ("Windows Terminal can show sharper posters via Sixel — enable "
+                "\"Experimental: Sixel\" in its settings.")
+    return None
 
 
 def _render_format(mode: str):
     """chafa --format value for the full-screen poster, or None to let chafa
-    autodetect. `mode` is the user's poster setting (auto/sixel/…)."""
+    autodetect. `mode` is the user's poster setting.
+
+    'auto' now picks the sharpest protocol the terminal actually supports
+    (kitty > iterm > sixel), so ANY pixel-capable terminal gets photo-quality
+    posters instead of blocks — while unknown terminals fall back safely."""
     if mode == "sixel":
         return "sixels"
+    if mode == "blocks":
+        return "symbols"          # explicit user override → force Unicode blocks
     if mode == "auto":
         proto = detect_image_protocol()
-        if proto in ("kitty", "iterm"):
+        if proto == "kitty" or proto == "iterm":
             return proto
+        if proto == "sixel":
+            return "sixels"
     return None
 
 
@@ -156,6 +301,37 @@ def _poster_size():
 _img_cache = {}
 
 
+def _is_fast_cdn(url: str) -> bool:
+    """High-resolution, fast CDNs we fetch DIRECTLY (no wsrv resize) to keep the
+    full detail. They serve chafa-readable JPEG. (jsdelivr/anime-sama is fast too
+    but serves WEBP thumbnails → we route those through wsrv for jpg + resize.)"""
+    u = url or ""
+    return ("image.tmdb.org" in u or "s4.anilist.co" in u
+            or "m.media-amazon.com" in u)
+
+
+def _upgrade_source(url: str) -> str:
+    """Bump a low-res cover URL to full resolution so a LARGE on-screen poster
+    keeps real detail (faces, small text) instead of an upscaled blur. Covers
+    every CDN our sources use; unknown hosts are returned unchanged.
+
+      • TMDB (Coflix/French-Stream/Papystreaming/French-Manga):
+            …/t/p/w400/…  →  …/t/p/original/…   (full ~1500–2000 px scan)
+      • IMDB / Amazon via Cinemeta (GoldenMS):
+            …._V1_SX250.jpg  →  …._V1_SX1000.jpg  (250 px → 1000 px)
+
+    AniList (GoldenAnime) is handled at the SOURCE instead — its per-size file
+    names differ, so the URL can't be rewritten; the scraper asks for
+    ``coverImage.extraLarge`` directly. The bigger file is downloaded ONCE,
+    cached, and chafa downscales it to the pane — so it only ever helps."""
+    if not url:
+        return url
+    url = re.sub(r"(image\.tmdb\.org/t/p/)(?:w\d+|original)/", r"\1original/", url)
+    url = re.sub(r"(m\.media-amazon\.com/images/[^ ]*?\._V1_)[A-Za-z0-9_,]*(\.jpg)",
+                 r"\1SX1000\2", url, flags=re.IGNORECASE)
+    return url
+
+
 def _download(url: str, attempts: int = 3):
     """
     Get a local file path for `url`'s image, downloading it ONCE.
@@ -176,17 +352,28 @@ def _download(url: str, attempts: int = 3):
     if url.startswith("//"):
         url = "https:" + url
 
-    # Reuse the already-downloaded file if we still have it.
+    # Reuse the already-downloaded file if we still have it (keyed by the
+    # ORIGINAL url so callers are unchanged).
     cached = _img_cache.get(url)
     if cached and os.path.exists(cached):
         return cached
 
-    # Route through wsrv.nl first : it resizes + serves from a fast CDN, so a
-    # 1.3 MB anime-sama cover on the THROTTLED raw.githubusercontent.com (which
-    # took ~8 s / timed out) becomes a ~30 KB image in ~1 s. Fall back to the
-    # original URL if wsrv is unreachable. Either way the file is cached under
-    # the ORIGINAL url so callers/keys are unchanged.
-    fetch_urls = [u for u in (_fast_url(url), url) if u]
+    # Fetch a HIGHER-RESOLUTION source when we can, so a large on-screen poster
+    # keeps real detail (faces, small text) instead of an upscaled blur. Many
+    # covers are TMDB `…/t/p/w400/…` (only 400 px wide) — bump the size segment.
+    src = _upgrade_source(url)
+
+    # Fetch order:
+    #  • Fast, high-res CDNs (TMDB / AniList / Metahub) → fetch the upgraded URL
+    #    DIRECTLY so we keep the full resolution (wsrv would resize it DOWN to
+    #    its width and cost us the detail we just gained). wsrv stays as a
+    #    fallback if the direct fetch fails.
+    #  • Everything else (slow/throttled origin hosts) → wsrv first (it resizes
+    #    + serves from a fast CDN), origin as fallback.
+    if _is_fast_cdn(src):
+        fetch_urls = [u for u in (src, _fast_url(src)) if u]
+    else:
+        fetch_urls = [u for u in (_fast_url(src), src) if u]
 
     # One quick attempt per URL (wsrv CDN first, then the origin). A short 8 s
     # timeout keeps a throttled host from stalling the poster for tens of
@@ -205,16 +392,20 @@ def _download(url: str, attempts: int = 3):
     return None
 
 
-def _fast_url(url: str, width: int = 400) -> str:
+def _fast_url(url: str, width: int = 720) -> str:
     """Rewrite a cover URL to go through wsrv.nl, which resizes it to `width`px
     and serves it from a fast CDN — small + quick, even when the source host is
-    slow/throttled. Returns "" for already-proxied URLs."""
+    slow/throttled. Returns "" for already-proxied URLs.
+
+    720px + q=90 keeps the download tiny (~80 KB) while giving the SIXEL renderer
+    enough source pixels that the poster never blurs from upscaling, even in a
+    large/maximised window."""
     if not url or "wsrv.nl" in url:
         return ""
     import urllib.parse
     src = url.split("://", 1)[-1]  # wsrv wants the URL without the scheme
     return ("https://wsrv.nl/?url=" + urllib.parse.quote(src, safe="")
-            + f"&w={width}&output=jpg")
+            + f"&w={width}&q=90&output=jpg")
 
 
 def prefetch(url: str):
@@ -321,6 +512,58 @@ def render_to_text(url: str, cols: int = 30, rows: int = 16):
     if ok:
         _text_cache[key] = result
     return result
+
+
+# ── SIXEL overlay for the live search-list preview ────────────────────
+# The inline preview (render_to_text) is blocky because it's captured Text in a
+# Rich Layout. For photo-sharp pixels we instead paint chafa's SIXEL DIRECTLY to
+# the terminal, positioned over a reserved region (done in cli_utils).
+#
+# CRUCIAL: chafa must write to the REAL terminal (not a captured pipe) — that's
+# the only way it can ioctl(TIOCGWINSZ) for the true cell pixel size and render
+# at native resolution. Capturing the output makes chafa assume a smaller cell
+# → fewer pixels → an upscaled, BLURRY poster (the bug this replaces). This is
+# exactly what render_url/show_poster does, which is why those are sharp.
+def get_download_path(url: str):
+    """The local path of `url`'s already-downloaded image, or None. Pure cache
+    lookup — never hits the network, so it's safe to poll from the UI loop
+    (the download itself is done in the background via prefetch())."""
+    if not url:
+        return None
+    if url.startswith("//"):
+        url = "https:" + url
+    p = _img_cache.get(url)
+    return p if (p and os.path.exists(p)) else None
+
+
+def render_sixel_positioned(url: str, cols: int, rows: int,
+                            row: int, col: int, out_fd: int) -> bool:
+    """Paint `url`'s cover as SIXEL at screen cell (row, col), sized cols×rows,
+    writing straight to `out_fd` (the terminal) so chafa renders at native
+    resolution — SHARP, same as the full-screen poster. Cursor is saved/restored
+    so the surrounding Rich frame is undisturbed. No-op (False) until the image
+    is downloaded; never blocks the UI (no network here). stdin is /dev/null so
+    chafa can't touch the keyboard, and the format is forced (no capability
+    query)."""
+    path = get_download_path(url)
+    if not path or not chafa_available():
+        return False
+    try:
+        os.write(out_fd, b"\x1b7" + ("\x1b[%d;%dH" % (row, col)).encode())
+        subprocess.run(
+            [_CHAFA_PATH, "--format", "sixels", *_color_args(), *_quality_args(),
+             "--size", f"{cols}x{rows}", path],
+            stdin=subprocess.DEVNULL, stdout=out_fd, stderr=subprocess.DEVNULL,
+            timeout=8,
+        )
+        os.write(out_fd, b"\x1b8")
+        return True
+    except Exception:
+        try:
+            os.write(out_fd, b"\x1b8")
+        except Exception:
+            pass
+        return False
 
 
 def get_cached_text(url: str, cols: int = 30, rows: int = 16):

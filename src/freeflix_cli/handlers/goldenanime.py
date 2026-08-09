@@ -23,6 +23,14 @@ from curl_cffi import requests
 import re
 
 
+def _cover(media: dict) -> str:
+    """Best AniList cover URL: extraLarge (sharpest) → large → medium. AniList
+    file names differ per size, so the URL can't be upgraded after the fact —
+    we must pick the big one here (the GraphQL query now fetches extraLarge)."""
+    ci = (media or {}).get("coverImage") or {}
+    return ci.get("extraLarge") or ci.get("large") or ci.get("medium") or ""
+
+
 def search_imdb_id(title: str):
     import urllib.parse
 
@@ -95,9 +103,7 @@ def handle_goldenanime():
                 "romaji"
             )
             max_episodes = media.get("episodes")
-            cover_url = media.get("coverImage", {}).get("large") or media.get(
-                "coverImage", {}
-            ).get("medium")
+            cover_url = _cover(media)
     else:
         title = query
         print_info(f"Searching AniList by Title: [cyan]{title}[/cyan]")
@@ -121,8 +127,7 @@ def handle_goldenanime():
 
             previews = [
                 make_preview(
-                    cover=(m.get("coverImage", {}) or {}).get("large")
-                    or (m.get("coverImage", {}) or {}).get("medium", ""),
+                    cover=_cover(m),
                     title=m["title"]["english"] or m["title"]["romaji"],
                     lines=_ani_lines(m),
                     panel_title="GoldenAnime",
@@ -143,9 +148,7 @@ def handle_goldenanime():
                 anilist_id = match["id"]
                 title = match["title"]["english"] or match["title"]["romaji"]
                 max_episodes = match.get("episodes")
-                cover_url = (match.get("coverImage", {}) or {}).get("large") or (
-                    match.get("coverImage", {}) or {}
-                ).get("medium")
+                cover_url = _cover(match)
 
     # Anime poster + summary at selection (cover from AniList).
     from .. import terminal_image

@@ -49,8 +49,8 @@ def handle_anilist_continue():
             status = f"Finished {progress}/{total}"
         else:
             status = f"Ep {progress+1}/{total}"
-        cover = (e["media"].get("coverImage", {}) or {}).get("large") \
-            or (e["media"].get("coverImage", {}) or {}).get("medium") or ""
+        _ci = e["media"].get("coverImage", {}) or {}
+        cover = _ci.get("extraLarge") or _ci.get("large") or _ci.get("medium") or ""
         labels.append(f"{title} ({status})")
         previews.append(make_preview(cover=cover, title=title,
                                      lines=[status], panel_title="AniList"))
@@ -85,10 +85,9 @@ def handle_anilist_continue():
     if p_choice == 2:  # Back
         return
 
-    # Extract cover URL for both providers
-    cover_url = selected_entry["media"].get("coverImage", {}).get(
-        "large"
-    ) or selected_entry["media"].get("coverImage", {}).get("medium")
+    # Extract cover URL for both providers (extraLarge = sharpest)
+    _ci = selected_entry["media"].get("coverImage", {}) or {}
+    cover_url = _ci.get("extraLarge") or _ci.get("large") or _ci.get("medium")
 
     if p_choice == 1:  # GoldenAnime
         goldenanime.handle_goldenanime_episode(

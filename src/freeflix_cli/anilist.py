@@ -72,6 +72,7 @@ class AniListClient:
                     coverImage {
                         medium
                         large
+                        extraLarge
                     }
                     genres
                     format
@@ -145,6 +146,8 @@ class AniListClient:
                             }
                             coverImage {
                                 medium
+                                large
+                                extraLarge
                             }
                             format
                             episodes

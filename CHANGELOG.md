@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.10.8
+
+Posters **nets** (vrais pixels) au lieu des blocs Unicode flous — partout,
+**y compris l'aperçu live dans la liste de recherche** — et en **haute
+résolution** pour toutes les sources.
+
+- Les posters s'affichent maintenant via le **meilleur protocole graphique**
+  que le terminal supporte réellement : **kitty** (Kitty/Ghostty/WezTerm),
+  **iTerm2** (macOS), ou **sixel** (Konsole, foot, Windows Terminal, xterm…),
+  avec repli automatique sur les **blocs Unicode** partout ailleurs (SSH, cmd…).
+  chafa reste l'encodeur — on quitte juste son *mode blocs*.
+- **Détection fiable du sixel par interrogation du terminal (DA1)** : on ne
+  force le sixel **que** s'il est réellement **activé** — sinon on afficherait
+  du charabia d'échappement (Konsole livre le sixel *désactivé* par défaut).
+- **Paramètres → Show Posters** affiche le protocole détecté et, sur
+  Windows Terminal, **explique comment activer le sixel**. Nouvelle option
+  « blocks » pour forcer les blocs.
+- **Aperçu LIVE net dans la liste de recherche** : le poster de droite est
+  désormais peint en **vrai sixel** (chafa écrit directement dans le terminal,
+  positionné → résolution native, comme le poster plein écran), au lieu des
+  blocs Unicode. Actif **par défaut** dès que le terminal a le sixel (Konsole,
+  foot, Windows Terminal…). Détection Konsole par version (Konsole n'annonce
+  pas le sixel en DA1, donc on se fie à `KONSOLE_VERSION` ≥ 22.12).
+- **Sources en haute résolution** (fini les visages pixelisés) : les covers
+  basse-déf sont récupérées en pleine résolution avant rendu —
+  **TMDB** `w400 → original` (Coflix, French-Stream, Papystreaming,
+  French-Manga), **IMDB/Amazon** `SX250 → SX1000` (GoldenMS via Cinemeta), et
+  **AniList** demande `extraLarge` (GoldenAnime). Ces CDN rapides sont
+  téléchargés en direct (sans redimensionnement wsrv qui coûtait le détail).
+
 ## 1.10.7
 
 Réparation des lecteurs **premium** de French-Stream (fsvid.lol / vidzy).

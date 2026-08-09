@@ -839,6 +839,15 @@ def main():
     disable_terminal_reports()
     drain_stdin()
 
+    # Probe the terminal's image capability ONCE here, on the main thread and
+    # before any Rich Live grabs the tty — so the sixel DA1 query can't race the
+    # UI. Result is cached; posters then render as real pixels where supported.
+    try:
+        from . import terminal_image
+        terminal_image.warm_up()
+    except Exception:
+        pass
+
     # Background "new releases" feed (personalised to your history) — never
     # blocks the home; results appear once ready.
     from . import recent
@@ -1241,12 +1250,22 @@ def main():
 
                 def _a_posters():
                     from . import terminal_image
-                    p_opts = ["auto (chafa picks best format)",
-                              "sixel (photo quality — needs terminal Sixel)", "off (no posters)"]
-                    p_vals = ["auto", "sixel", "off"]
+                    p_opts = ["auto (best pixel protocol, else blocks)",
+                              "sixel (force photo quality — needs terminal Sixel)",
+                              "blocks (Unicode blocks everywhere)",
+                              "off (no posters)"]
+                    p_vals = ["auto", "sixel", "blocks", "off"]
                     if not terminal_image.chafa_available():
                         print_warning(t("chafa is not installed — posters won't show until you "
                                         "install it (e.g. sudo dnf install chafa)."))
+                    else:
+                        proto = terminal_image.detect_image_protocol()
+                        nice = {"kitty": "kitty graphics (sharp)", "iterm": "iTerm2 (sharp)",
+                                "sixel": "sixel (sharp)"}.get(proto, "Unicode blocks")
+                        print_info(f"{t('Detected image protocol')}: [cyan]{nice}[/cyan]")
+                        hint = terminal_image.sixel_hint()
+                        if hint:
+                            print_warning(hint)
                     c = _pick(p_opts, t("Show Posters:"))
                     if c is not None:
                         tracker.set_poster_mode(p_vals[c])

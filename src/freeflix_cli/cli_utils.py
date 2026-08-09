@@ -900,6 +900,19 @@ def select_with_preview(labels, prompt, previews, default_index=0):
             dl_pool.submit(terminal_image.prefetch, cover)
         rndr_pool.submit(terminal_image.render_to_text, cover, cols, rows)
 
+    def _prefetch_cover(cover):
+        """Download `cover` in the background so the SHARP sixel overlay can be
+        painted straight to the terminal once the image is on disk (the paint
+        itself runs chafa positioned — no capture — for native resolution)."""
+        import time as _time
+        now = _time.time()
+        if not cover or terminal_image.get_download_path(cover) is not None:
+            return
+        if now - dl_submitted.get(cover, 0) < _RETRY_AFTER:
+            return
+        dl_submitted[cover] = now
+        dl_pool.submit(terminal_image.prefetch, cover)
+
     def _poster_text(cover, cols, rows):
         """Cached poster Text if ready, else None (queueing a render). Never
         blocks — the actual chafa work happens in the background pool."""
@@ -999,6 +1012,24 @@ def select_with_preview(labels, prompt, previews, default_index=0):
             lines.append(Text("    (no match)", style=color("dim")))
         return lines
 
+    # ── Live SIXEL overlay (photo-sharp preview) ─────────────────────────
+    # When the terminal has sixel actually ON, the right-column poster is drawn
+    # as REAL PIXELS painted over a reserved blank region after each Live frame
+    # (see _paint_sixel), instead of Unicode blocks. Offsets are tunable so the
+    # image can be nudged into the panel precisely (calibration).
+    # Calibratable at runtime (no rebuild): nudge the poster into the panel with
+    #   FREEFLIX_SIXEL_ROW=<n>  FREEFLIX_SIXEL_COL_PAD=<n>
+    def _envint(name, default):
+        try:
+            return int(os.environ.get(name, default))
+        except (TypeError, ValueError):
+            return default
+    _OV_ROW = _envint("FREEFLIX_SIXEL_ROW", 2)       # 1-based row of poster top
+    _OV_COL_PAD = _envint("FREEFLIX_SIXEL_COL_PAD", 3)  # cols after the list → left edge
+    overlay = [False]
+    ov_region = {}
+    painted = [None]   # last (cover, cols, rows) actually painted as sixel
+
     def render():
         nonlocal start
         h, left_w, right_w, p_cols, p_rows = _dims()
@@ -1038,7 +1069,27 @@ def select_with_preview(labels, prompt, previews, default_index=0):
                 _prewarm(p_cols, p_rows)
 
         pv = previews[vis[sel]] if vis else {}
-        body = [_poster_block(pv.get("cover", ""), p_cols, p_rows)]
+        cover = pv.get("cover", "")
+
+        if overlay[0]:
+            # Reserve a blank block the poster's height; the sixel is painted
+            # OVER it after the frame. Record where to paint (top-left cell).
+            _prefetch_cover(cover)
+            ov_region.clear()
+            ov_region.update({
+                "cover": cover, "cols": p_cols, "rows": p_rows,
+                "row": _OV_ROW, "col": left_w + _OV_COL_PAD,
+            })
+            ready = terminal_image.get_download_path(cover) is not None
+            if cover and not ready:
+                poster_widget = Align.center(Spinner("dots", style=color("accent")))
+                # pad below the spinner so the title sits where the poster ends
+                body = [poster_widget, Text("\n" * max(0, p_rows - 1))]
+            else:
+                body = [Text("\n" * max(0, p_rows - 1))]  # blank canvas for pixels
+        else:
+            body = [_poster_block(cover, p_cols, p_rows)]
+
         if pv.get("title"):
             body.append(Text(f"\n{pv['title']}", style=f"bold {color('header')}",
                              justify="center"))
@@ -1046,8 +1097,10 @@ def select_with_preview(labels, prompt, previews, default_index=0):
             if ln:
                 body.append(Text(ln, style=color("dim"), justify="center"))
 
+        # Overlay keeps the poster at the TOP (deterministic row) ; blocks stay
+        # vertically centered as before.
         right = Panel(
-            Align.center(Group(*body), vertical="middle"),
+            Align.center(Group(*body), vertical="top" if overlay[0] else "middle"),
             border_style=color("border"),
             title=pv.get("panel_title", ""),
             height=win + 2,
@@ -1120,7 +1173,25 @@ def select_with_preview(labels, prompt, previews, default_index=0):
         if not visible:
             return False
         cover = previews[visible[selected]].get("cover", "")
-        return bool(cover) and terminal_image.get_cached_text(cover, pc, pr) is None
+        if not cover:
+            return False
+        if overlay[0]:
+            return terminal_image.get_download_path(cover) is None
+        return terminal_image.get_cached_text(cover, pc, pr) is None
+
+    def _paint_sixel():
+        """Paint the selected cover as SHARP sixel over the reserved region
+        (called right after each Live frame). chafa writes straight to the
+        terminal at the region's cell so it renders at native resolution; cursor
+        is saved/restored. No-op until the image is downloaded. Best-effort."""
+        if not overlay[0] or not ov_region:
+            return False
+        cover = ov_region.get("cover")
+        if not cover:
+            return False
+        return terminal_image.render_sixel_positioned(
+            cover, ov_region["cols"], ov_region["rows"],
+            ov_region["row"], ov_region["col"], sys.stdout.fileno())
 
     _prewarm()  # start downloading/rendering every poster in the background
 
@@ -1135,6 +1206,24 @@ def select_with_preview(labels, prompt, previews, default_index=0):
         use_raw = sys.stdin.isatty()
     except Exception:
         use_raw = False
+
+    # Enable the photo-sharp SIXEL overlay when: we drive the raw POSIX loop
+    # (so we control exactly when frames repaint), chafa is present, posters
+    # aren't forced to blocks/off, and the terminal actually has sixel ON
+    # (confirmed via DA1 — never paints garbage on a sixel-off terminal). This
+    # is the DEFAULT for everyone (poster mode defaults to "auto"), including
+    # existing users after an update — no setting to flip.
+    try:
+        from .tracker import tracker as _tracker
+        _pmode = (_tracker.get_poster_mode() or "auto").lower()
+        overlay[0] = (
+            use_raw
+            and terminal_image.chafa_available()
+            and _pmode in ("auto", "sixel")
+            and terminal_image.detect_image_protocol() == "sixel"
+        )
+    except Exception:
+        overlay[0] = False
 
     chosen = {"idx": None}
 
@@ -1154,6 +1243,7 @@ def select_with_preview(labels, prompt, previews, default_index=0):
                 with Live(render(), console=console, screen=True,
                           auto_refresh=False) as live:
                     live.refresh()
+                    _paint_sixel()   # first paint (once the sixel is ready)
                     while chosen["idx"] is None:
                         anim = _is_loading()
                         r, _, _ = _sel.select([fd], [], [], 0.06 if anim else 0.25)
@@ -1180,6 +1270,26 @@ def select_with_preview(labels, prompt, previews, default_index=0):
                             dirty = True
                         if dirty or anim:
                             live.update(render(), refresh=True)
+                            # Rich just repainted the (blank) region → paint the
+                            # real pixels back over it. Only mark it painted when
+                            # a real image was written (else the ready-transition
+                            # below still fires once the sixel finishes).
+                            if _paint_sixel():
+                                painted[0] = (ov_region.get("cover"),
+                                              ov_region.get("cols"),
+                                              ov_region.get("rows"))
+                        elif overlay[0] and visible:
+                            # No key/resize/anim, but the selected poster's sixel
+                            # may have JUST finished rendering (spinner → image):
+                            # one repaint to drop the spinner and paint pixels.
+                            cc = previews[visible[selected]].get("cover", "")
+                            _, _, _, pc, pr = _dims()
+                            k = (cc, pc, pr)
+                            if (cc and painted[0] != k
+                                    and terminal_image.get_download_path(cc) is not None):
+                                live.update(render(), refresh=True)
+                                _paint_sixel()
+                                painted[0] = k
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
         else:

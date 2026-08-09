@@ -13,6 +13,7 @@ _FR = {
     # ── Home menu ────────────────────────────────────────────────
     "FreeFlix CLI - Home": "FreeFlix CLI — Accueil",
     "anime · manga · movies · series": "anime · manga · films · séries",
+    "Detected image protocol": "Protocole d'image détecté",
     "No match — try another search": "Aucun résultat — essaie une autre recherche",
     "What would you like to do?": "Que veux-tu faire ?",
     "▶ Continue from AniList": "▶ Continuer depuis AniList",
