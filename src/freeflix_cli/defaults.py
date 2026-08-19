@@ -85,7 +85,11 @@ DEFAULT_PLAYERS = {
     },
     "uqload": {
         "type": "uqload",
-        "sec_headers": "Sec-Fetch-Dest:video;Sec-Fetch-Mode:no-cors;Sec-Fetch-Site:same-site",
+        # uqload now serves a signed fsvid-family HLS (…/.urlset/master.m3u8)
+        # that needs the embed's Origin (like the browser sends) — not the old
+        # mp4. is-hls detection forces the /stream endpoint regardless of `ext`.
+        "origin": True,
+        "sec_headers": "Sec-Fetch-Dest:empty;Sec-Fetch-Mode:cors;Sec-Fetch-Site:same-site",
         "ext": "mp4",
     },
     "filemoon": {
@@ -105,7 +109,23 @@ DEFAULT_PLAYERS = {
     },
     "kakaflix": {"type": "kakaflix"},
     # "myvidplay": {"type": "myvidplay", "referrer": "https://myvidplay.com/"},
-    "embed4me": {"type": "embed4me"},
+    # ansembed.net — Anime-Sama's own embed (JWPlayer). The real stream is a
+    # plain vmget.online HLS (fsvid family, NOT Akamai), served only with the
+    # embed's Origin+Referer. This is the player that actually works for recent
+    # episodes (One Piece, Mushoku Tensei…) where embed4me now hits Akamai.
+    "ansembed": {
+        "type": "default",
+        "referrer": "https://ansembed.net",
+        "origin": True,
+    },
+    "embed4me": {
+        "type": "embed4me",
+        # embed4me now streams from external CDNs (e.g. TikTok) that hotlink-
+        # check the browser's Origin + Sec-Fetch headers ; without them the CDN
+        # 403s even with a valid Referer. Mirror the browser player's request.
+        "origin": True,
+        "sec_headers": "Sec-Fetch-Dest:empty;Sec-Fetch-Mode:cors;Sec-Fetch-Site:cross-site",
+    },
     "coflix.upn": {"type": "embed4me"},
     "veev": {"type": "veev", "ext": "mp4"},
     "xtremestream": {"type": "xtremestream"},

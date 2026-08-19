@@ -7,6 +7,7 @@ from ..net_config import DNS_OPTIONS
 from ..defaults import DEFAULT_PLAYERS, DEFAULT_NEW_URL, DEFAULT_KAKAFLIX_PLAYERS
 import re
 import base64
+import urllib.parse
 
 import json
 import binascii
@@ -159,8 +160,53 @@ def get_hls_link_embed4me(embed_url: str) -> str:
     decrypted = _decrypt_data(hex_data)
 
     data = json.loads(decrypted)
+
+    # Legacy layout : a direct {"source": "…m3u8"}.
     source = data.get("source")
-    return source
+    if source:
+        return source if source.startswith("http") else url_root + source
+
+    # 2026 layout : no single "source" — the stream lives on one of several
+    # CDNs, chosen by streamingConfig.order. Each CDN maps to its own path key,
+    # and the final URL is {cdn.domain}{path}?{cdn.params}. In-House has no
+    # external domain → served from the embed host itself.
+    #   Tiktok→hlsVideoTiktok · Google→hlsVideoGoogle · Cloudflare→cfNative ·
+    #   In-House→source  (from the player bundle's own mapping).
+    paths = {
+        "Tiktok": data.get("hlsVideoTiktok"),
+        "Google": data.get("hlsVideoGoogle"),
+        "Cloudflare": data.get("cfNative"),
+        "In-House": data.get("source"),
+    }
+    sc = data.get("streamingConfig")
+    if isinstance(sc, str):
+        try:
+            sc = json.loads(sc)
+        except (ValueError, TypeError):
+            sc = None
+    if isinstance(sc, dict) and isinstance(sc.get("order"), list):
+        adjust = sc.get("adjust") or {}
+        for cdn in sc["order"]:
+            path = paths.get(cdn)
+            if not path:
+                continue
+            adj = adjust.get(cdn) or {}
+            if adj.get("disabled") and cdn != "In-House":
+                continue
+            domain = adj.get("domain")
+            if domain:
+                params = adj.get("params")
+                query = urllib.parse.urlencode(params) if isinstance(params, dict) and params else ""
+                built = f"https://{domain}{path}" + (f"?{query}" if query else "")
+            else:
+                built = path if path.startswith("http") else url_root + path
+            return built
+
+    # Last resort : any *hlsVideo* path we can turn absolute.
+    for k, v in data.items():
+        if isinstance(v, str) and k.lower().startswith("hlsvideo") and v:
+            return v if v.startswith("http") else url_root + v
+    return None
 
 
 def get_hls_link_uqload(url: str, headers: dict) -> str:
@@ -174,9 +220,16 @@ def get_hls_link_uqload(url: str, headers: dict) -> str:
     Returns:
         HLS stream URL
     """
+    # uqload rotates its domain (uqload.is / .vc / .cx…). Use the EMBED's own
+    # host for the Referer instead of a hardcoded one, so a domain change
+    # doesn't break extraction — and the token the CDN signs matches.
+    try:
+        host = url.split("/")[2]
+    except IndexError:
+        host = "uqload.vc"
     response = _get(
         url.replace("embed-", ""),
-        headers={**headers, "Referer": "https://uqload.is/"},
+        headers={**headers, "Referer": f"https://{host}/"},
         impersonate="chrome",
     )
     response.raise_for_status()
@@ -189,8 +242,8 @@ def get_hls_link_uqload(url: str, headers: dict) -> str:
         code = text
     haystack = (code or "") + "\n" + text
 
-    # Current layout : sources: [{ file: "https://…/master.m3u8?…" }]
-    # Legacy layout  : sources: ["https://…"]
+    # Modern layout : a signed fsvid-family HLS `…/.urlset/master.m3u8?t=…`
+    # (served with the embed's Origin). Legacy : sources:[{file:"…mp4"}].
     for pat in (
         r'file:\s*"([^"]+\.(?:m3u8|mp4)[^"]*)"',
         r'sources:\s*\[\s*"([^"]+)"',

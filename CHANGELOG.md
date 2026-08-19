@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.10.10
+
+Anime-Sama : les lecteurs des **derniers épisodes** rejouent (One Piece,
+Mushoku Tensei, Youjo Senki…).
+
+- **ansembed pris en charge** — c'était **le** lecteur qui marche pour les
+  épisodes récents, mais il était marqué « non supporté ». Il sert un vrai HLS
+  `vmget.online` (famille fsvid) ; on l'extrait maintenant et on envoie les
+  headers `Origin` + `Referer` du player (comme le navigateur) → il joue.
+- **uqload réparé** : Referer **dynamique** (le domaine tourne : `.is` → `.vc`)
+  au lieu d'un domaine codé en dur, + `Origin` — il est passé à un HLS signé de
+  la même famille fsvid.
+- **embed4me** : décode le nouveau format multi-CDN (le stream a migré de
+  `source` vers `hlsVideoTiktok` + `streamingConfig`). Note : quand embed4me
+  route via le CDN **TikTok/Akamai** (anti-bot), il reste bloqué — mais
+  **ansembed couvre** ces animes.
+- Headers `Origin` + `Sec-Fetch-*` transmis par le proxy quand le CDN les exige
+  (protection anti-hotlink).
+
 ## 1.10.9
 
 - **Correctif Python 3.9** : `terminal_image.py` utilisait une annotation

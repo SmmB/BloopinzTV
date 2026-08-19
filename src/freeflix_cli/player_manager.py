@@ -1913,6 +1913,12 @@ def play_video(
             if referer:
                 proxy_headers["Referer"] = referer
 
+            # Some CDNs (e.g. embed4me → TikTok CDN) only serve the stream when
+            # the request carries the embed's Origin, exactly like the browser
+            # player does — Referer alone gets a 403. Send it when configured.
+            if player_config.get("origin") and domain:
+                proxy_headers["Origin"] = f"https://{domain}"
+
             # Add specific headers from config
             if player_config.get("alt-used") is True:
                 proxy_headers["Alt-Used"] = domain
