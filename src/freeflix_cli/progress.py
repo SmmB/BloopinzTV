@@ -171,8 +171,11 @@ class LoadingScreen:
         body.append(Align.center(Text(self._status, style=color("dim"))))
 
         inner = Group(*body)
-        # Vertically center the whole thing on the screen.
-        return Align.center(inner, vertical="middle", height=max(8, h - 1))
+        # Vertically center the whole thing on the screen, with the brand
+        # pinned to the bottom so the title never leaves the terminal.
+        centered = Align.center(inner, vertical="middle", height=max(8, h - 2))
+        brand = Align.center(Text("BloopinzTV", style=f"bold {color('accent')}"))
+        return Group(centered, brand)
 
 
 # ─── Download progress (filters yt-dlp / aria2c logs) ─────────────────
