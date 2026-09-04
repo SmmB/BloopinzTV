@@ -317,7 +317,7 @@ def main():
     print()
     _ensure_permanent_path()
     print()
-    print("  Run:  freeflix")
+    print("  Run:  bloopinztv")
 
 
 if __name__ == "__main__":

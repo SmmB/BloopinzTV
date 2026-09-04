@@ -4,10 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 uv run --with . --with pyinstaller --with lxml \
-  pyinstaller --onefile --name freeflix \
+  pyinstaller --onefile --name bloopinztv \
   --collect-all curl_cffi \
   --collect-submodules freeflix_cli \
   --hidden-import readchar \
   --copy-metadata readchar --copy-metadata freeflix-cli --copy-metadata curl_cffi \
   src/freeflix_cli/__main__.py
-echo "Built: dist/freeflix"
+echo "Built: dist/bloopinztv"

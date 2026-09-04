@@ -248,6 +248,6 @@ install_flaresolverr() {
 install_flaresolverr
 
 echo
-ok "Installation complete. Run :  ${GREEN}freeflix${NC}"
+ok "Installation complete. Run :  ${GREEN}bloopinztv${NC}"
 log "Icons: if you installed the Nerd Font, set it as your terminal font, then"
 log "in FreeFlix go to Settings > Icon Style > nerd (emoji is the default)."

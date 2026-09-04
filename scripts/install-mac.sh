@@ -114,6 +114,6 @@ if ! curl -fsS --max-time 2 http://127.0.0.1:8191/ >/dev/null 2>&1; then
 fi
 
 echo
-ok "Installation complete. Run :  ${GREEN}freeflix${NC}"
+ok "Installation complete. Run :  ${GREEN}bloopinztv${NC}"
 log "Icons: set your terminal font to 'CaskaydiaCove Nerd Font', then in"
 log "FreeFlix go to Settings > Icon Style > nerd (emoji is the default)."

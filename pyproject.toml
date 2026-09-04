@@ -48,7 +48,7 @@ Issues = "https://github.com/freedy237/freeflix-cli/issues"
 "Upstream (autoflix-cli)" = "https://github.com/PaulExplorer/autoflix-cli"
 
 [project.scripts]
-freeflix = "freeflix_cli.main:main"
+bloopinztv = "freeflix_cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/freeflix_cli"]

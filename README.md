@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <code>uv tool install freeflix-cli</code> &nbsp;·&nbsp; then run <code>freeflix</code>
+  <code>uv tool install freeflix-cli</code> &nbsp;·&nbsp; then run <code>bloopinztv</code>
 </p>
 
 ---
@@ -77,7 +77,7 @@
 | 🇫🇷 | **French UI** : the whole CLI is in French when language is set to FR |
 | 🛡 | **Anti-crash mpv config** : ytdl-hook off, gpu renderer, no infinite reconnect |
 | 🎨 | **Anime4K** pre-bundled with runtime toggle CTRL+1 / CTRL+0 |
-| 🩺 | **`freeflix --doctor`** system diagnostic (check deps, config, network) |
+| 🩺 | **`bloopinztv --doctor`** system diagnostic (check deps, config, network) |
 
 ---
 
@@ -112,7 +112,7 @@ pip install --user freeflix-cli
 Then :
 
 ```bash
-freeflix
+bloopinztv
 ```
 
 ### Linux (install script — system deps + Anime4K shaders)
@@ -154,7 +154,7 @@ uv pip install -e .
 ## 🚀 Usage
 
 ```bash
-freeflix
+bloopinztv
 ```
 
 That's it. The menu walks you through everything.
@@ -187,7 +187,7 @@ The Linux `install.sh` does this for you when it detects an Nvidia card.
 
 ### Settings menu
 
-`freeflix → ⚙ Settings (AniList)` exposes :
+`bloopinztv → ⚙ Settings (AniList)` exposes :
 
 - **AniList Token** — paste the OAuth token from anilist.co to enable sync ;
 - **Language** — switches the UI (FR / EN) and default subtitle language ;
