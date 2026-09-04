@@ -4,5 +4,9 @@
 {
   "anime-sama":   "https://anime-sama.pw",
   "french-manga": "https://w16.french-manga.net",
-  "coflix":       "https://coflix.cymru"
+  "coflix":       "https://coflix.cymru",
+  "videasy":      "https://api.speedracelight.com",
+  "moviesapi":    "https://moviesapi.to",
+  "multi-decrypt": "https://enc-dec.app/api",
+  "xpass":        "https://play.xpass.top"
 }

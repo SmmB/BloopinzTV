@@ -1,7 +1,7 @@
 import json
 import urllib.parse
 from curl_cffi import requests
-from ..scraping.goldenms import goldenms_extractor
+from ..scraping.goldenms import goldenms_extractor, VIDEASY_ORIGIN
 from ..scraping.subtitles import subtitle_extractor
 from ..cli_utils import (
     select_from_list,
@@ -341,24 +341,18 @@ def _flow_goldenms_stream(
     }
 
     # The scraper already attaches the right Referer/Origin per source
-    # (videasy → cineby.gd, hexa → hexa.su, …). Propagate them so the CDN
-    # doesn't return 502.
+    # (moviesapi → moviesapi.to, videasy → player.videasy.to, …). Propagate
+    # them so the CDN doesn't return 502.
     if isinstance(selection.get("headers"), dict):
         for k, v in selection["headers"].items():
             if v:
                 headers[k] = v
 
-    # Belt-and-braces : vidlink streams sometimes lose their headers if
-    # the scraper builder changes.
-    if "vidlink" in selection["source"].lower():
-        headers.setdefault("Referer", f"{goldenms_extractor.vidlink_api}/")
-        headers.setdefault("Origin", f"{goldenms_extractor.vidlink_api}/")
-
     # Videasy default — same fallback if for any reason the source dict
     # didn't carry one.
     if "videasy" in selection["source"].lower():
-        headers.setdefault("Referer", goldenms_extractor.videasy_referer + "/")
-        headers.setdefault("Origin", goldenms_extractor.videasy_referer)
+        headers.setdefault("Referer", f"{VIDEASY_ORIGIN}/")
+        headers.setdefault("Origin", VIDEASY_ORIGIN)
 
     success = play_video(
         final_url,
