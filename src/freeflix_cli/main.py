@@ -411,14 +411,14 @@ def _home_dashboard():
             grid.add_row(title_cell, meta_cell, bar_cell)
         inner = Group(body, Text(""), grid)
         return Panel(inner, border_style=color("accent"), expand=True, box=box.ROUNDED,
-                     padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left",
+                     padding=(1, 2), title="[bold]BloopinzTV[/bold]", title_align="left",
                      subtitle=f"[{color('dim')}]{t('anime · manga · movies · series')}[/]",
                      subtitle_align="right")
 
     body.append(f"\n\n  {t('Nothing watched yet — pick a source below to start!')}",
                 style=color("dim"))
     return Panel(body, border_style=color("accent"), expand=True, box=box.ROUNDED,
-                 padding=(1, 2), title="[bold]FreeFlix[/bold]", title_align="left",
+                 padding=(1, 2), title="[bold]BloopinzTV[/bold]", title_align="left",
                  subtitle=f"[{color('dim')}]{t('anime · manga · movies · series')}[/]",
                  subtitle_align="right")
 
@@ -571,17 +571,17 @@ def _show_about(version: str):
     link = f"{color('info')} underline"
 
     body = Text()
-    body.append("\n  FreeFlix CLI", style=f"bold {accent}")
+    body.append("\n  BloopinzTV CLI", style=f"bold {accent}")
     body.append(f"  v{version}\n\n", style=f"bold {color('warning')}")
     body.append("  " + t("Watch movies, series and anime from your terminal.\n"),
                 style="white")
     body.append("\n")
     body.append("  GitHub  : ", style=color("dim"))
-    body.append("https://github.com/freedy237/freeflix-cli\n", style=link)
+    body.append("https://github.com/SmmB/BloopinzTV\n", style=link)
     body.append("  PyPI    : ", style=color("dim"))
     body.append("https://pypi.org/project/freeflix-cli/\n", style=link)
     body.append("  Issues  : ", style=color("dim"))
-    body.append("https://github.com/freedy237/freeflix-cli/issues\n", style=link)
+    body.append("https://github.com/SmmB/BloopinzTV/issues\n", style=link)
     body.append("\n")
     body.append(f"  {t('License')} : ", style=color("dim"))
     body.append("GPL-3.0-or-later\n", style="white")
@@ -604,7 +604,7 @@ def _show_about(version: str):
         Panel(
             body,
             title=f"[bold {color('header')}]{icon('info')}  {t('About')}[/]",
-            subtitle=f"[{color('dim')}]freeflix v{version}[/]",
+            subtitle=f"[{color('dim')}]BloopinzTV v{version}[/]",
             border_style=color("border"),
             expand=False,
         )
@@ -1029,7 +1029,7 @@ def main():
         choice_idx = select_from_list(
             menu_items,
             t("What would you like to do?"),
-            header=f"{icon('home')} {t('FreeFlix CLI - Home')}  •  v{_VERSION}",
+            header=f"{icon('home')} {t('BloopinzTV - Home')}  •  v{_VERSION}",
             top=_home_dashboard(),
             flush_input=True,        # drop the startup terminal-query burst first
             esc_selects_last=False,  # a phantom Esc must NOT quit the app on entry

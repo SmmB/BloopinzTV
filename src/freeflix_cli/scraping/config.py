@@ -6,7 +6,7 @@ from ..defaults import DEFAULT_SOURCE_PORTAL
 # control the authoritative source URLs. When a site moves, we push a new
 # data/source_portal.jsonc and every user picks it up on next launch.
 REMOTE_CONFIG_URL = (
-    "https://raw.githubusercontent.com/freedy237/freeflix-cli/main/"
+    "https://raw.githubusercontent.com/SmmB/BloopinzTV/main/"
     "data/source_portal.jsonc"
 )
 

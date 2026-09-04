@@ -9,19 +9,19 @@ from rich.text import Text
 from .cli_utils import console, clear_screen
 from .themes import color
 
-# FreeFlix wordmark (ANSI Shadow style).
+# BloopinzTV wordmark (ANSI Shadow style).
 _LOGO = r"""
- ███████╗██████╗ ███████╗███████╗███████╗██╗     ██╗██╗  ██╗
- ██╔════╝██╔══██╗██╔════╝██╔════╝██╔════╝██║     ██║╚██╗██╔╝
- █████╗  ██████╔╝█████╗  █████╗  █████╗  ██║     ██║ ╚███╔╝
- ██╔══╝  ██╔══██╗██╔══╝  ██╔══╝  ██╔══╝  ██║     ██║ ██╔██╗
- ██║     ██║  ██║███████╗███████╗██║     ███████╗██║██╔╝ ██╗
- ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝╚═╝  ╚═╝
+ ██████╗ ██╗      ██████╗  ██████╗ ██████╗ ██╗███╗   ██╗███████╗████████╗ ██╗   ██╗
+ ██╔══██╗██║     ██╔═══██╗██╔═══██╗██╔══██╗██║████╗  ██║╚══███╔╝╚══██╔══╝ ██║   ██║
+ ██████╔╝██║     ██║   ██║██║   ██║██████╔╝██║██╔██╗ ██║  ███╔╝    ██║ ██║   ██║
+ ██╔══██╗██║     ██║   ██║██║   ██║██╔═══╝ ██║██║╚██╗██║ ███╔╝     ██║ ╚██╗ ██╔╝
+ ██████╔╝███████╗╚██████╔╝╚██████╔╝██║     ██║██║ ╚████║███████╗   ██║  ╚████╔╝
+ ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═══╝
 """
 
 
 def logo_renderable(width: int = None, height: int = None):
-    """Return the themed FreeFlix wordmark, centered and responsive (full
+    """Return the themed BloopinzTV wordmark, centered and responsive (full
     ANSI-shadow art on wide terminals, a compact mark otherwise). Shared by
     the splash and the loading screen so they always match."""
     try:
@@ -29,10 +29,10 @@ def logo_renderable(width: int = None, height: int = None):
         h = height if height is not None else console.size.height
     except Exception:
         w, h = 80, 24
-    if w >= 64 and h >= 14:
+    if w >= 84 and h >= 14:
         return Align.center(Text(_LOGO, style=f"bold {color('accent')}"))
     from .icons import icon
-    return Align.center(Text(f"{icon('home')} FREEFLIX", style=f"bold {color('accent')}"))
+    return Align.center(Text(f"{icon('home')} BLOOPINZTV", style=f"bold {color('accent')}"))
 
 
 def tagline_text(width: int = None) -> Text:

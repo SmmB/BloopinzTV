@@ -343,7 +343,13 @@ def _status_bar(filtering: bool = False) -> Text:
     else:
         hint = (f"  ↑/↓ · {_t('Enter: select')} · {_t('Esc: back')} · "
                 f"{_t('/: filter')} · {_t('?: help')}")
-    return Text(hint, style=color("dim"))
+    bar = Text(hint, style=color("dim"))
+    # Brand footer : BloopinzTV pinned to the bottom-right of every menu.
+    brand = "BloopinzTV"
+    pad = max(2, console.size.width - cell_len(hint) - cell_len(brand) - 2)
+    bar.append(" " * pad)
+    bar.append(brand, style=f"bold {color('accent')}")
+    return bar
 
 
 def _help_overlay() -> Panel:
