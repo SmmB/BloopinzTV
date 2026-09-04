@@ -335,8 +335,9 @@ def _crumb_line(max_w: int) -> Text:
     return out
 
 
-def _status_bar(filtering: bool = False) -> Text:
-    """Bottom hint line shown under every menu (consistent across screens)."""
+def _status_bar(filtering: bool = False):
+    """Bottom footer: a separator rule + the hint line with the BloopinzTV
+    brand pinned to the bottom-right. Consistent across every menu."""
     from .i18n import t as _t
     if filtering:
         hint = f"  {_t('type to filter')} · {_t('Enter: select')} · {_t('Esc: clear')}"
@@ -349,7 +350,8 @@ def _status_bar(filtering: bool = False) -> Text:
     pad = max(2, console.size.width - cell_len(hint) - cell_len(brand) - 2)
     bar.append(" " * pad)
     bar.append(brand, style=f"bold {color('accent')}")
-    return bar
+    rule = Text("─" * console.size.width, style=color("dim"))
+    return Group(rule, bar)
 
 
 def _help_overlay() -> Panel:
@@ -639,11 +641,21 @@ def select_from_list(options: list[str], prompt: str, default_index: int = 0,
         if end_index < len(view):
             lines.append(Text("  ↓ ...", style=color("dim")))
 
-        # Status bar : consistent bottom hints on every menu.
+        # Footer : separator + hint line with the brand, pinned to the
+        # bottom of the terminal so the title never leaves the screen.
         lines.append(Text(""))
         lines.append(_status_bar(filtering=flt["on"]))
 
-        return Group(*lines)
+        body = Group(*lines[:-1])
+        footer = lines[-1]
+        try:
+            opts = console.options.update(width=console.size.width)
+            body_h = len(console.render_lines(body, opts))
+            footer_h = len(console.render_lines(footer, opts))
+        except Exception:
+            body_h, footer_h = 0, 1
+        pad = max(0, console.size.height - body_h - footer_h)
+        return Group(body, *([Text("")] * pad), footer)
 
     # Full-screen menus (those carrying a banner) render in the ALTERNATE
     # screen buffer (screen=True): the whole frame is repainted every refresh,
@@ -779,10 +791,15 @@ def select_multiple(options, prompt, preselected=None, disabled=None):
         lines.append(Text(""))
         lines.append(Text(f"  {len(checked)} {_t('selected')}", style=color("info")))
         # Bottom hint — highlight Space, which toggles the current line.
-        lines.append(Text(
+        hint = Text(
             f"  ↑/↓ · {_t('Space: select')} · {_t('a: all')} · "
             f"{_t('Enter: confirm')} · {_t('Esc: back')}",
-            style=f"bold {color('accent')}"))
+            style=f"bold {color('accent')}")
+        brand = "BloopinzTV"
+        pad = max(2, console.size.width - hint.cell_len - cell_len(brand) - 2)
+        hint.append(" " * pad)
+        hint.append(brand, style=f"bold {color('accent')}")
+        lines.append(hint)
         return Group(*lines)
 
     with Live(render(), refresh_per_second=20, transient=True) as live:
